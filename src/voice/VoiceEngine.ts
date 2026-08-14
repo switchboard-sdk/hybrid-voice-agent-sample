@@ -15,9 +15,17 @@ export interface EdgeSpeechEventMap {
   onSpeechEnd: undefined
   onInterrupted: undefined
   onTTSComplete: undefined
+  onLLMResponse: LLMReply
 }
 
 export type EdgeSpeechEventName = keyof EdgeSpeechEventMap
+
+/** A completed on-device generation. */
+export interface LLMReply {
+  text: string
+  /** Milliseconds the node spent on this turn, as reported by the SDK. */
+  processingTime: number
+}
 
 type Listener = (payload: unknown) => void
 
@@ -26,13 +34,23 @@ type Listener = (payload: unknown) => void
  * `Silero` (the name the C++ SileroVADExtension registers) — not `SileroVAD`,
  * which was the Objective-C extension's name in the old Expo implementation.
  */
-const EXTENSIONS = { Onnx: {}, Silero: {}, Whisper: {}, Sherpa: {} }
+const EXTENSIONS = { Onnx: {}, Silero: {}, Whisper: {}, Sherpa: {}, LlamaCpp: {} }
+
+// Empty: the node loads the model bundled in its framework. A bare filename
+// would not resolve and would silently load nothing.
+const DEFAULT_LLM_MODEL = ''
+
+const GENERATE_TIMEOUT_MS = 60_000
 
 interface VoiceEngineConfig {
   vadSensitivity: number
   sampleRate: number
   bufferSize: number
   ttsVoice: string
+  llmModelPath: string
+  llmContextSize: number
+  llmTemperature: number
+  llmInstructions: string
 }
 
 /**
@@ -58,9 +76,20 @@ class VoiceEngine {
     sampleRate: 16000,
     bufferSize: 512,
     ttsVoice: 'en_GB',
+    llmModelPath: DEFAULT_LLM_MODEL,
+    llmContextSize: 4096,
+    llmTemperature: 0.8,
+    llmInstructions: '',
   }
 
   private readonly listeners = new Map<EdgeSpeechEventName, Set<Listener>>()
+
+  /** Resolver for the generate() call currently awaiting `responseReceived`. */
+  private pendingGeneration: {
+    resolve: (reply: LLMReply) => void
+    reject: (error: Error) => void
+    timer: ReturnType<typeof setTimeout>
+  } | null = null
 
   // MARK: - Public listener API (mirrors the old Expo NativeModule.addListener)
 
@@ -130,6 +159,77 @@ class VoiceEngine {
     if (typeof config.ttsVoice === 'string') {
       this.config.ttsVoice = config.ttsVoice
     }
+    if (typeof config.llmModelPath === 'string') {
+      this.config.llmModelPath = config.llmModelPath
+    }
+    if (typeof config.llmContextSize === 'number') {
+      this.config.llmContextSize = config.llmContextSize
+    }
+    if (typeof config.llmTemperature === 'number') {
+      this.config.llmTemperature = config.llmTemperature
+    }
+    if (typeof config.llmInstructions === 'string') {
+      this.config.llmInstructions = config.llmInstructions
+    }
+  }
+
+  // MARK: - On-device language model
+
+  /** Prompt the on-device model and resolve with its reply. */
+  async generate(text: string): Promise<LLMReply> {
+    if (!this.isInitialized) {
+      throw this.makeError(
+        'NOT_INITIALIZED',
+        'Switchboard SDK not initialized. Call initialize() first.'
+      )
+    }
+    if (!text.trim()) {
+      throw this.makeError('EMPTY_PROMPT', 'Prompt text cannot be empty')
+    }
+    if (!this.engineId) {
+      this.createEngine()
+    }
+    if (this.pendingGeneration) {
+      throw this.makeError('GENERATION_IN_PROGRESS', 'A reply is already being generated')
+    }
+
+    this.setState('processing')
+
+    return new Promise<LLMReply>((resolve, reject) => {
+      // A failed generation is silent, so without this the slot never clears.
+      const timer = setTimeout(() => {
+        this.settleGeneration()
+        reject(this.makeError('GENERATE_TIMEOUT', 'The on-device model did not reply in time'))
+      }, GENERATE_TIMEOUT_MS)
+
+      this.pendingGeneration = { resolve, reject, timer }
+
+      const res = this.ensureClient().callAction('llmNode', 'prompt', { text })
+      if (res.error) {
+        this.settleGeneration()
+        reject(this.makeError('GENERATE_FAILED', res.error.message))
+      }
+    })
+  }
+
+  /** Clear the in-flight generation and return to a resting state. */
+  private settleGeneration(): void {
+    if (this.pendingGeneration) {
+      clearTimeout(this.pendingGeneration.timer)
+      this.pendingGeneration = null
+    }
+    this.setState(this.isListening ? 'listening' : 'idle')
+  }
+
+  /** Clear the node's conversation and set the system prompt. */
+  resetConversation(instructions?: string): void {
+    if (instructions !== undefined) {
+      this.config.llmInstructions = instructions
+    }
+    if (!this.engineId) {
+      return
+    }
+    this.ensureClient().setValue('llmNode', 'instructions', this.config.llmInstructions)
   }
 
   // MARK: - Control
@@ -249,6 +349,15 @@ class VoiceEngine {
     this.engineId = null
     this.isListening = false
     this.isSpeaking = false
+
+    const pending = this.pendingGeneration
+    if (pending) {
+      clearTimeout(pending.timer)
+      this.pendingGeneration = null
+      pending.reject(
+        this.makeError('ENGINE_STOPPED', 'The audio engine was torn down while generating')
+      )
+    }
   }
 
   /**
@@ -292,6 +401,18 @@ class VoiceEngine {
             },
             { id: 'ttsNode', type: 'Sherpa.TTS' },
             { id: 'monoToMultiChannelNode', type: 'MonoToMultiChannel' },
+            // No audio in or out — driven entirely through actions and events.
+            {
+              id: 'llmNode',
+              type: 'LlamaCpp.LLM',
+              config: {
+                initializeModel: true,
+                contextSize: this.config.llmContextSize,
+                temperature: this.config.llmTemperature,
+                ...(this.config.llmModelPath && { modelPath: this.config.llmModelPath }),
+                ...(this.config.llmInstructions && { prompt: this.config.llmInstructions }),
+              },
+            },
           ],
           connections: [
             { sourceNode: 'inputNode', destinationNode: 'multiChannelToMonoNode' },
@@ -368,8 +489,16 @@ class VoiceEngine {
       this.isSpeaking = false
       this.setState('listening')
       this.emit('onTTSComplete', undefined)
+    } else if (node === 'llmNode' && name === 'responseReceived') {
+      const text = (this.extractText(e) ?? '').trim()
+      const processingTime = Number(e?.data?.processingTime ?? 0)
+      const pending = this.pendingGeneration
+      this.settleGeneration()
+      pending?.resolve({ text, processingTime })
+      this.emit('onLLMResponse', { text, processingTime })
     }
-    // ttsNode 'synthesisStarted' is intentionally ignored (matches old native).
+    // ttsNode 'synthesisStarted' and llmNode 'tokenReceived' are ignored — we
+    // wait for the full reply before speaking it.
   }
 
   private extractText(e: any): string | null {
@@ -422,7 +551,17 @@ class VoiceEngine {
     this.isListening = false
     this.isSpeaking = false
     this.eventsWired = false
-    this.config = { vadSensitivity: 0.5, sampleRate: 16000, bufferSize: 512, ttsVoice: 'en_GB' }
+    this.pendingGeneration = null
+    this.config = {
+      vadSensitivity: 0.5,
+      sampleRate: 16000,
+      bufferSize: 512,
+      ttsVoice: 'en_GB',
+      llmModelPath: DEFAULT_LLM_MODEL,
+      llmContextSize: 4096,
+      llmTemperature: 0.8,
+      llmInstructions: '',
+    }
   }
 }
 

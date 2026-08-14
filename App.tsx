@@ -3,6 +3,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import { EdgeSpeechProvider } from './src/voice'
 import { ConversationScreen } from './src/screens/ConversationScreen'
+import { DEFAULT_SYSTEM_PROMPT } from './src/services/onDeviceChat'
 
 // Credentials from environment variables (see .env.example)
 const SWITCHBOARD_APP_ID = process.env.EXPO_PUBLIC_SWITCHBOARD_APP_ID ?? ''
@@ -14,7 +15,8 @@ export default function App(): React.JSX.Element {
       <EdgeSpeechProvider
         appId={SWITCHBOARD_APP_ID}
         appSecret={SWITCHBOARD_APP_SECRET}
-        vadSensitivity={0.5}>
+        vadSensitivity={0.5}
+        llmInstructions={DEFAULT_SYSTEM_PROMPT}>
         <ConversationScreen />
       </EdgeSpeechProvider>
     </SafeAreaProvider>
