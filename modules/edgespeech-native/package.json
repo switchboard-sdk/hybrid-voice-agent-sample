@@ -1,0 +1,21 @@
+{
+  "name": "edgespeech-native",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Native TurboModule bridging the app to the Switchboard SDK's JSON-RPC channel",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "codegenConfig": {
+    "name": "RNEdgeSpeechSpec",
+    "type": "modules",
+    "jsSrcsDir": "src",
+    "android": {
+      "javaPackageName": "com.synervoz.edgespeech"
+    },
+    "ios": {
+      "modulesProvider": {
+        "EdgeSpeech": "EdgeSpeechModuleProvider"
+      }
+    }
+  }
+}

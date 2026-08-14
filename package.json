@@ -1,0 +1,52 @@
+{
+  "name": "hybrid-voice-agent-sample",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hybrid on-device + cloud voice agent — demo app built with the Switchboard SDK",
+  "license": "MIT",
+  "main": "index.ts",
+  "scripts": {
+    "start": "expo start",
+    "ios": "expo run:ios",
+    "prebuild": "expo prebuild --platform ios --clean",
+    "postinstall": "node scripts/postinstall.js",
+    "frameworks": "node scripts/fetch-frameworks.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "check": "tsc --noEmit",
+    "test": "jest",
+    "format": "prettier --write .",
+    "android": "expo run:android"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.4.0",
+    "edgespeech-native": "file:./modules/edgespeech-native",
+    "expo": "~54.0.32",
+    "expo-dev-client": "~6.0.21",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-safe-area-context": "~5.6.0"
+  },
+  "devDependencies": {
+    "@react-native/eslint-config": "^0.85.2",
+    "@testing-library/react-native": "^13.3.3",
+    "@types/jest": "^29.5.0",
+    "@types/react": "~19.1.10",
+    "babel-preset-expo": "~54.0.0",
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^10.1.8",
+    "jest": "^29.7.0",
+    "jest-expo": "~54.0.0",
+    "prettier": "^3.8.3",
+    "react-test-renderer": "19.1.0",
+    "typescript": "~5.9.2"
+  },
+  "overrides": {
+    "eslint-plugin-ft-flow": {
+      "eslint": "$eslint"
+    }
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

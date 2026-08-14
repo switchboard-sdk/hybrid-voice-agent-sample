@@ -1,0 +1,12 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["jest"]
+  },
+  "include": ["*.ts", "*.tsx", "src/**/*", "__mocks__/**/*", "modules/**/src/**/*"],
+  "exclude": ["node_modules", "ios", "android"]
+}

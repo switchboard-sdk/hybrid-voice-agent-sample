@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Hybrid Voice Agent",
+    "slug": "hybrid-voice-agent-sample",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "icon": "./assets/icon.png",
+    "newArchEnabled": true,
+    "platforms": ["ios"],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.switchboard.hybridvoiceagent",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "This app needs microphone access so you can talk to the voice agent"
+      }
+    }
+  }
+}

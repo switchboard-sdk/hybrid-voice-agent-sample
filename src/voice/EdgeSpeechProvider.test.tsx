@@ -1,0 +1,224 @@
+import React from 'react'
+import { renderHook, act } from '@testing-library/react-native'
+import {
+  EdgeSpeechProvider,
+  useEdgeSpeechContext,
+  type EdgeSpeechProviderProps,
+} from './EdgeSpeechProvider'
+import { voiceEngine } from './VoiceEngine'
+
+jest.mock('./VoiceEngine', () => ({
+  __esModule: true,
+  voiceEngine: {
+    addListener: jest.fn(() => ({ remove: jest.fn() })),
+    initialize: jest.fn(),
+    configure: jest.fn(),
+    listen: jest.fn(() => Promise.resolve()),
+    stopListening: jest.fn(() => Promise.resolve()),
+    speak: jest.fn(() => Promise.resolve()),
+    stopSpeaking: jest.fn(() => Promise.resolve()),
+    requestMicrophonePermission: jest.fn(() => Promise.resolve(true)),
+  },
+}))
+
+const defaultProps: EdgeSpeechProviderProps = { appId: 'test-id', appSecret: 'test-secret' }
+
+const wrapper = ({ children }: { children: React.ReactNode }) =>
+  React.createElement(EdgeSpeechProvider, defaultProps, children)
+
+describe('EdgeSpeechProvider', () => {
+  beforeEach(() => {
+    jest.clearAllMocks()
+  })
+
+  it('initializes the native module on mount with provided credentials', () => {
+    renderHook(() => useEdgeSpeechContext(), { wrapper })
+
+    expect(voiceEngine.initialize).toHaveBeenCalledWith('test-id', 'test-secret')
+  })
+
+  it('configures the native module on mount with defaults', () => {
+    renderHook(() => useEdgeSpeechContext(), { wrapper })
+
+    expect(voiceEngine.configure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sttModel: 'whisper-base-en',
+        ttsVoice: 'en_GB',
+        vadSensitivity: 0.5,
+      })
+    )
+  })
+
+  it('configures with provided optional values', () => {
+    const customWrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(
+        EdgeSpeechProvider,
+        { appId: 'test-id', appSecret: 'test-secret', vadSensitivity: 0.8, ttsVoice: 'en_US' },
+        children
+      )
+
+    renderHook(() => useEdgeSpeechContext(), { wrapper: customWrapper })
+
+    expect(voiceEngine.configure).toHaveBeenCalledWith(
+      expect.objectContaining({ vadSensitivity: 0.8, ttsVoice: 'en_US' })
+    )
+  })
+
+  it('passes sampleRate and bufferSize to configure when provided', () => {
+    const customWrapper = ({ children }: { children: React.ReactNode }) =>
+      React.createElement(
+        EdgeSpeechProvider,
+        { appId: 'test-id', appSecret: 'test-secret', sampleRate: 22050, bufferSize: 1024 },
+        children
+      )
+
+    renderHook(() => useEdgeSpeechContext(), { wrapper: customWrapper })
+
+    expect(voiceEngine.configure).toHaveBeenCalledWith(
+      expect.objectContaining({ sampleRate: 22050, bufferSize: 1024 })
+    )
+  })
+
+  it('omits sampleRate and bufferSize from configure when not provided', () => {
+    renderHook(() => useEdgeSpeechContext(), { wrapper })
+
+    const configArg = (voiceEngine.configure as jest.Mock).mock.calls[0][0]
+    expect(configArg).not.toHaveProperty('sampleRate')
+    expect(configArg).not.toHaveProperty('bufferSize')
+  })
+
+  it('calls stopListening on unmount', () => {
+    const { unmount } = renderHook(() => useEdgeSpeechContext(), { wrapper })
+    unmount()
+
+    expect(voiceEngine.stopListening).toHaveBeenCalled()
+  })
+
+  it('throws when used outside of provider', () => {
+    expect(() => renderHook(() => useEdgeSpeechContext())).toThrow(
+      'useEdgeSpeech must be used within an <EdgeSpeechProvider>'
+    )
+  })
+
+  describe('prop validation', () => {
+    it('throws when appId is empty', () => {
+      const badWrapper = ({ children }: { children: React.ReactNode }) =>
+        React.createElement(EdgeSpeechProvider, { appId: '', appSecret: 'test-secret' }, children)
+      expect(() => renderHook(() => useEdgeSpeechContext(), { wrapper: badWrapper })).toThrow(
+        'EdgeSpeechProvider: appId is required'
+      )
+    })
+
+    it('throws when appId is whitespace only', () => {
+      const badWrapper = ({ children }: { children: React.ReactNode }) =>
+        React.createElement(
+          EdgeSpeechProvider,
+          { appId: '   ', appSecret: 'test-secret' },
+          children
+        )
+      expect(() => renderHook(() => useEdgeSpeechContext(), { wrapper: badWrapper })).toThrow(
+        'EdgeSpeechProvider: appId is required'
+      )
+    })
+
+    it('throws when appSecret is empty', () => {
+      const badWrapper = ({ children }: { children: React.ReactNode }) =>
+        React.createElement(EdgeSpeechProvider, { appId: 'test-id', appSecret: '' }, children)
+      expect(() => renderHook(() => useEdgeSpeechContext(), { wrapper: badWrapper })).toThrow(
+        'EdgeSpeechProvider: appSecret is required'
+      )
+    })
+
+    it('throws when vadSensitivity is above 1.0', () => {
+      const badWrapper = ({ children }: { children: React.ReactNode }) =>
+        React.createElement(
+          EdgeSpeechProvider,
+          { appId: 'test-id', appSecret: 'test-secret', vadSensitivity: 1.5 },
+          children
+        )
+      expect(() => renderHook(() => useEdgeSpeechContext(), { wrapper: badWrapper })).toThrow(
+        'EdgeSpeechProvider: vadSensitivity must be between 0.0 and 1.0'
+      )
+    })
+
+    it('throws when vadSensitivity is below 0.0', () => {
+      const badWrapper = ({ children }: { children: React.ReactNode }) =>
+        React.createElement(
+          EdgeSpeechProvider,
+          { appId: 'test-id', appSecret: 'test-secret', vadSensitivity: -0.1 },
+          children
+        )
+      expect(() => renderHook(() => useEdgeSpeechContext(), { wrapper: badWrapper })).toThrow(
+        'EdgeSpeechProvider: vadSensitivity must be between 0.0 and 1.0'
+      )
+    })
+
+    it('throws when sttModel is an empty string', () => {
+      const badWrapper = ({ children }: { children: React.ReactNode }) =>
+        React.createElement(
+          EdgeSpeechProvider,
+          { appId: 'test-id', appSecret: 'test-secret', sttModel: '  ' },
+          children
+        )
+      expect(() => renderHook(() => useEdgeSpeechContext(), { wrapper: badWrapper })).toThrow(
+        'EdgeSpeechProvider: sttModel cannot be an empty string'
+      )
+    })
+
+    it('throws when ttsVoice is an empty string', () => {
+      const badWrapper = ({ children }: { children: React.ReactNode }) =>
+        React.createElement(
+          EdgeSpeechProvider,
+          { appId: 'test-id', appSecret: 'test-secret', ttsVoice: '' },
+          children
+        )
+      expect(() => renderHook(() => useEdgeSpeechContext(), { wrapper: badWrapper })).toThrow(
+        'EdgeSpeechProvider: ttsVoice cannot be an empty string'
+      )
+    })
+  })
+
+  describe('exposed methods delegate to native module', () => {
+    it('listen()', async () => {
+      const { result } = renderHook(() => useEdgeSpeechContext(), { wrapper })
+      await act(async () => {
+        await result.current.listen()
+      })
+      expect(voiceEngine.listen).toHaveBeenCalled()
+    })
+
+    it('stopListening()', async () => {
+      const { result } = renderHook(() => useEdgeSpeechContext(), { wrapper })
+      await act(async () => {
+        await result.current.stopListening()
+      })
+      expect(voiceEngine.stopListening).toHaveBeenCalled()
+    })
+
+    it('speak(text)', async () => {
+      const { result } = renderHook(() => useEdgeSpeechContext(), { wrapper })
+      await act(async () => {
+        await result.current.speak('hello')
+      })
+      expect(voiceEngine.speak).toHaveBeenCalledWith('hello')
+    })
+
+    it('stopSpeaking()', async () => {
+      const { result } = renderHook(() => useEdgeSpeechContext(), { wrapper })
+      await act(async () => {
+        await result.current.stopSpeaking()
+      })
+      expect(voiceEngine.stopSpeaking).toHaveBeenCalled()
+    })
+
+    it('requestMicrophonePermission()', async () => {
+      const { result } = renderHook(() => useEdgeSpeechContext(), { wrapper })
+      let granted: boolean
+      await act(async () => {
+        granted = await result.current.requestMicrophonePermission()
+      })
+      expect(voiceEngine.requestMicrophonePermission).toHaveBeenCalled()
+      expect(granted!).toBe(true)
+    })
+  })
+})
