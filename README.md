@@ -77,6 +77,27 @@ stream. The entire audio graph — voice activity detection, transcription,
 synthesis, barge-in — is authored in TypeScript above it, so changing the
 pipeline never means touching native code.
 
+## Conversation history
+
+**App state is the source of truth.** The `LlamaCpp.LLM` node also keeps its own
+rolling context, evicting the oldest exchanges when the context fills, but that
+context is opaque — it cannot be read, and there is no way to append a past turn
+without the model generating a reply to it. The only reset it offers is writing
+the `instructions` property, which clears the history deliberately.
+
+So the two are kept in step by tracking how many messages the node has ingested:
+
+- **In sync** — the usual case — a turn sends only the new user message, so the
+  node keeps its cache warm and the reply comes back fast.
+- **Diverged** — the transcript contains turns the node never saw, because a
+  cloud reply landed or the brain was switched mid-conversation — the node is
+  reset and the conversation is replayed as a single prompt.
+
+That costs one re-prefill at the moment of a switch and nothing during a normal
+exchange. It is also what lets the toggle in SWI-6788 keep context: both brains
+read and write the same transcript, so flipping mid-conversation continues rather
+than restarts.
+
 ## Development
 
 ```bash

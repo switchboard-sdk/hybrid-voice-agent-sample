@@ -11,6 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.switchboard.hybridvoiceagent",
+      "appleTeamId": "NQ2VLM7NM7",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app needs microphone access so you can talk to the voice agent"
       }

@@ -169,3 +169,112 @@ describe('VoiceEngine transport', () => {
     expect(sttNode.config.useGPU).toBe(false)
   })
 })
+
+describe('on-device language model', () => {
+  it('registers the LlamaCpp extension on initialize', () => {
+    voiceEngine.initialize('id', 'secret')
+
+    const init = sentCalls().find((c) => c.params?.actionName === 'initialize')
+    expect(init!.params.params.extensions).toHaveProperty('LlamaCpp')
+  })
+
+  it('adds an llmNode to the graph with no audio connections', async () => {
+    voiceEngine.initialize('id', 'secret')
+    await voiceEngine.listen()
+
+    const graph = findAction('createEngine')!.params.params.config.graph
+    const llm = graph.nodes.find((n: any) => n.id === 'llmNode')
+    expect(llm.type).toBe('LlamaCpp.LLM')
+    expect(llm.config).not.toHaveProperty('modelPath')
+    expect(graph.connections.some((c: any) => JSON.stringify(c).includes('llmNode'))).toBe(false)
+  })
+
+  it('generate() prompts the node and resolves on responseReceived', async () => {
+    voiceEngine.initialize('id', 'secret')
+    const pending = voiceEngine.generate('how are you?')
+
+    const prompt = findAction('prompt')
+    expect(prompt!.params.objectURI).toBe('llmNode')
+    expect(prompt!.params.params.text).toBe('how are you?')
+
+    native.emit(
+      JSON.stringify({
+        objectURI: 'llmNode',
+        name: 'responseReceived',
+        data: { text: '  Doing well.  ', processingTime: 1234 },
+      })
+    )
+
+    await expect(pending).resolves.toEqual({ text: 'Doing well.', processingTime: 1234 })
+  })
+
+  it('reports processing state while generating', async () => {
+    voiceEngine.initialize('id', 'secret')
+    const states: string[] = []
+    voiceEngine.addListener('onStateChange', ({ state }) => states.push(state))
+
+    const pending = voiceEngine.generate('hello')
+    expect(states).toContain('processing')
+
+    native.emit(
+      JSON.stringify({
+        objectURI: 'llmNode',
+        name: 'responseReceived',
+        data: { text: 'hi', processingTime: 1 },
+      })
+    )
+    await pending
+  })
+
+  it('rejects an empty prompt', async () => {
+    voiceEngine.initialize('id', 'secret')
+    await expect(voiceEngine.generate('   ')).rejects.toThrow(/empty/i)
+  })
+
+  it('rejects a second generation while one is in flight', async () => {
+    voiceEngine.initialize('id', 'secret')
+    const first = voiceEngine.generate('one')
+
+    await expect(voiceEngine.generate('two')).rejects.toThrow(/already being generated/i)
+
+    native.emit(
+      JSON.stringify({
+        objectURI: 'llmNode',
+        name: 'responseReceived',
+        data: { text: 'done', processingTime: 1 },
+      })
+    )
+    await first
+  })
+
+  it('resetConversation writes the instructions property', async () => {
+    voiceEngine.initialize('id', 'secret')
+    await voiceEngine.listen()
+
+    voiceEngine.resetConversation('be terse')
+
+    const set = sentCalls().find((c) => c.method === 'setValue' && c.params?.key === 'instructions')
+    expect(set!.params.objectURI).toBe('llmNode')
+    expect(set!.params.value).toBe('be terse')
+  })
+  it('times out instead of wedging when the node never replies', async () => {
+    jest.useFakeTimers()
+    voiceEngine.initialize('id', 'secret')
+
+    const pending = voiceEngine.generate('hello')
+    pending.catch(() => {})
+    jest.advanceTimersByTime(60_000)
+    await expect(pending).rejects.toThrow(/did not reply in time/i)
+
+    jest.useRealTimers()
+    const next = voiceEngine.generate('again')
+    native.emit(
+      JSON.stringify({
+        objectURI: 'llmNode',
+        name: 'responseReceived',
+        data: { text: 'ok', processingTime: 1 },
+      })
+    )
+    await expect(next).resolves.toMatchObject({ text: 'ok' })
+  })
+})

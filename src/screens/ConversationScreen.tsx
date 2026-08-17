@@ -12,7 +12,8 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
-import { sendToChat, ConversationMessage } from '../services/chatService'
+import type { ConversationMessage } from '../services/chatService'
+import { replyOnDevice, resetOnDeviceConversation } from '../services/onDeviceChat'
 import { useEdgeSpeech } from '../voice'
 
 /**
@@ -37,6 +38,7 @@ export function ConversationScreen(): React.JSX.Element {
   const [textToSpeak, setTextToSpeak] = useState('Hello from the on-device voice agent!')
   const [conversationMode, setConversationMode] = useState(false)
   const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([])
+  const [lastReplyMs, setLastReplyMs] = useState<number | null>(null)
   const chatScrollRef = useRef<ScrollView>(null)
   const prevVoiceStateRef = useRef(voiceState)
 
@@ -45,7 +47,9 @@ export function ConversationScreen(): React.JSX.Element {
       await stopListening()
       let response: string
       try {
-        response = await sendToChat(userMessage.content, [...conversationHistory, userMessage])
+        const reply = await replyOnDevice(userMessage, conversationHistory)
+        response = reply.text
+        setLastReplyMs(reply.processingTime)
       } catch (error) {
         console.error('Chat error:', error)
         Alert.alert('Chat Error', (error as Error).message)
@@ -70,11 +74,18 @@ export function ConversationScreen(): React.JSX.Element {
   // Register final-transcript callback
   useEffect(() => {
     onTranscriptComplete((text: string) => {
-      const userMessage: ConversationMessage = { role: 'user', content: text }
+      // Whisper returns empty transcripts for non-speech. Dropping them keeps
+      // blank turns out of the history the model is replayed.
+      const content = text.trim()
+      if (!content) {
+        return
+      }
+
+      const userMessage: ConversationMessage = { role: 'user', content }
       setConversationHistory((prev) => [...prev, userMessage])
       setTimeout(() => chatScrollRef.current?.scrollToEnd({ animated: true }), 50)
 
-      if (conversationMode && text.trim()) {
+      if (conversationMode) {
         handleConversationResponse(userMessage)
       }
     })
@@ -117,6 +128,8 @@ export function ConversationScreen(): React.JSX.Element {
 
   const clearConversation = () => {
     setConversationHistory([])
+    setLastReplyMs(null)
+    resetOnDeviceConversation()
   }
 
   const getStateColor = () => {
@@ -151,7 +164,7 @@ export function ConversationScreen(): React.JSX.Element {
           <View style={styles.toggleRow}>
             <View>
               <Text style={styles.sectionTitle}>Conversation Mode</Text>
-              <Text style={styles.toggleDescription}>Auto-respond to speech using AI</Text>
+              <Text style={styles.toggleDescription}>Auto-respond using the on-device model</Text>
             </View>
             <Switch
               value={conversationMode}
@@ -193,8 +206,12 @@ export function ConversationScreen(): React.JSX.Element {
           {/* Thinking Indicator */}
           {voiceState === 'processing' && (
             <View style={styles.thinkingContainer}>
-              <Text style={styles.thinkingText}>Thinking...</Text>
+              <Text style={styles.thinkingText}>Thinking on device...</Text>
             </View>
+          )}
+
+          {voiceState !== 'processing' && lastReplyMs !== null && (
+            <Text style={styles.timingText}>On-device reply in {lastReplyMs} ms</Text>
           )}
         </View>
 
@@ -430,6 +447,12 @@ const styles = StyleSheet.create({
     backgroundColor: '#fff3e0',
     borderRadius: 8,
     alignItems: 'center',
+  },
+  timingText: {
+    marginTop: 10,
+    fontSize: 12,
+    color: '#666',
+    textAlign: 'center',
   },
   thinkingText: {
     fontSize: 14,

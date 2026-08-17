@@ -20,6 +20,10 @@ export interface EdgeSpeechProviderProps {
   vadSensitivity?: number
   sampleRate?: number
   bufferSize?: number
+  llmModelPath?: string
+  llmContextSize?: number
+  llmTemperature?: number
+  llmInstructions?: string
   children?: ReactNode
 }
 
@@ -37,6 +41,10 @@ export function EdgeSpeechProvider({
   vadSensitivity,
   sampleRate,
   bufferSize,
+  llmModelPath,
+  llmContextSize,
+  llmTemperature,
+  llmInstructions,
   children,
 }: EdgeSpeechProviderProps) {
   if (!appId || appId.trim() === '') {
@@ -70,8 +78,22 @@ export function EdgeSpeechProvider({
       vadSensitivity: vadSensitivity ?? defaultConfig.vadSensitivity,
       ...(sampleRate !== undefined && { sampleRate }),
       ...(bufferSize !== undefined && { bufferSize }),
+      ...(llmModelPath !== undefined && { llmModelPath }),
+      ...(llmContextSize !== undefined && { llmContextSize }),
+      ...(llmTemperature !== undefined && { llmTemperature }),
+      ...(llmInstructions !== undefined && { llmInstructions }),
     })
-  }, [sttModel, ttsVoice, vadSensitivity, sampleRate, bufferSize])
+  }, [
+    sttModel,
+    ttsVoice,
+    vadSensitivity,
+    sampleRate,
+    bufferSize,
+    llmModelPath,
+    llmContextSize,
+    llmTemperature,
+    llmInstructions,
+  ])
 
   const value: EdgeSpeechContextValue = {
     // Keep the method bound so it does not lose its `this`.
