@@ -1,0 +1,111 @@
+import { voiceEngine, type LLMReply } from '../voice/VoiceEngine'
+import {
+  DEFAULT_SYSTEM_PROMPT,
+  cancelledError,
+  type Brain,
+  type BrainId,
+  type BrainReply,
+  type ConversationMessage,
+} from './types'
+
+/**
+ * Sentinel for "the node holds turns the transcript does not account for".
+ * No message count can equal it, so the next turn always replays.
+ */
+const DIVERGED = -1
+
+/**
+ * The `LlamaCpp.LLM` node as a brain.
+ *
+ * App state owns the transcript, but the node keeps its own rolling context that
+ * cannot be read or appended to — only reset. So this tracks how many messages
+ * the node has ingested and, when that no longer matches the transcript, resets
+ * it and replays the conversation as a single prompt. See the README's
+ * "Conversation history" for why it works that way.
+ */
+export class OnDeviceBrain implements Brain {
+  readonly id: BrainId = 'on-device'
+  readonly label = 'On-device'
+
+  /** Messages of the app transcript the node has ingested, or DIVERGED. */
+  private syncedMessages = 0
+
+  /** Clear the node's conversation and set the system prompt. */
+  reset(instructions: string = DEFAULT_SYSTEM_PROMPT): void {
+    voiceEngine.resetConversation(instructions)
+    this.syncedMessages = 0
+  }
+
+  async reply(
+    transcript: string,
+    history: ConversationMessage[],
+    signal?: AbortSignal
+  ): Promise<BrainReply> {
+    if (signal?.aborted) {
+      throw cancelledError()
+    }
+
+    const inSync = this.syncedMessages === history.length
+    if (!inSync) {
+      voiceEngine.resetConversation()
+    }
+
+    const prompt = inSync ? transcript : this.renderReplay(history, transcript)
+    console.log(`[LLM] ${inSync ? 'incremental' : 'replaying transcript'}:`, prompt)
+
+    const startedAt = Date.now()
+    const reply = await this.generate(prompt, signal)
+    const processingTime = Date.now() - startedAt
+    console.log(
+      `[LLM] reply in ${reply.processingTime}ms (${processingTime}ms round trip):`,
+      reply.text
+    )
+
+    // The node now holds every message up to and including the reply it made.
+    this.syncedMessages = history.length + 2
+
+    return { text: reply.text, brain: this.id, processingTime }
+  }
+
+  /**
+   * Await the node's reply, giving up early if `signal` fires.
+   *
+   * The node cannot be told to stop, so cancelling abandons the turn: the model
+   * finishes unheard, the engine drops the reply when it lands, and the node is
+   * left holding a turn the transcript will not account for — hence DIVERGED, so
+   * the next turn resets and replays.
+   */
+  private async generate(prompt: string, signal?: AbortSignal): Promise<LLMReply> {
+    const onAbort = () => {
+      this.syncedMessages = DIVERGED
+      voiceEngine.cancelGeneration()
+    }
+    signal?.addEventListener('abort', onAbort)
+
+    try {
+      return await voiceEngine.generate(prompt)
+    } catch (error) {
+      // cancelGeneration() is what rejected it, so report it as a cancellation
+      // rather than as a failure of the model.
+      throw signal?.aborted ? cancelledError() : error
+    } finally {
+      signal?.removeEventListener('abort', onAbort)
+    }
+  }
+
+  /**
+   * Catch the node up: the whole conversation, plus this turn, as one prompt.
+   *
+   * The node takes a single string rather than a list of turns, so the roles have
+   * to be spelled out in the text for the model to tell them apart.
+   */
+  private renderReplay(history: ConversationMessage[], transcript: string): string {
+    if (history.length === 0) {
+      return transcript
+    }
+    const past = history
+      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+      .join('\n')
+    return `Here is our conversation so far:\n${past}\n\nUser: ${transcript}`
+  }
+}

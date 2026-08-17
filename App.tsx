@@ -3,7 +3,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import { EdgeSpeechProvider } from './src/voice'
 import { ConversationScreen } from './src/screens/ConversationScreen'
-import { DEFAULT_SYSTEM_PROMPT } from './src/services/onDeviceChat'
+import { DEFAULT_SYSTEM_PROMPT } from './src/brains'
 
 // Credentials from environment variables (see .env.example)
 const SWITCHBOARD_APP_ID = process.env.EXPO_PUBLIC_SWITCHBOARD_APP_ID ?? ''

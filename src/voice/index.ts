@@ -11,7 +11,7 @@ export { EdgeSpeechProvider, useEdgeSpeechContext } from './EdgeSpeechProvider'
 export type { EdgeSpeechProviderProps, EdgeSpeechContextValue } from './EdgeSpeechProvider'
 export { useEdgeSpeech } from './hook'
 export { voiceEngine } from './VoiceEngine'
-export type { EdgeSpeechEventMap, EdgeSpeechEventName } from './VoiceEngine'
+export type { EdgeSpeechEventMap, EdgeSpeechEventName, LLMReply } from './VoiceEngine'
 export type {
   VoiceConfig,
   VoiceState,

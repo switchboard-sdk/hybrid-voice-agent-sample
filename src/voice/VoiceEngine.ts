@@ -91,6 +91,14 @@ class VoiceEngine {
     timer: ReturnType<typeof setTimeout>
   } | null = null
 
+  /**
+   * Replies still coming for generations nobody is waiting for. The node has no
+   * cancel action, so a cancelled turn is only abandoned — its reply still
+   * arrives, and without this count it would resolve the *next* generation
+   * (there is one pending slot and the SDK event carries no request id).
+   */
+  private staleGenerations = 0
+
   // MARK: - Public listener API (mirrors the old Expo NativeModule.addListener)
 
   addListener<K extends EdgeSpeechEventName>(
@@ -198,6 +206,10 @@ class VoiceEngine {
     return new Promise<LLMReply>((resolve, reject) => {
       // A failed generation is silent, so without this the slot never clears.
       const timer = setTimeout(() => {
+        // Waiting this long having heard nothing means the replies we were still
+        // expecting are not coming. Stop expecting them, so a miscount cannot
+        // swallow the next real reply too.
+        this.staleGenerations = 0
         this.settleGeneration()
         reject(this.makeError('GENERATE_TIMEOUT', 'The on-device model did not reply in time'))
       }, GENERATE_TIMEOUT_MS)
@@ -210,6 +222,27 @@ class VoiceEngine {
         reject(this.makeError('GENERATE_FAILED', res.error.message))
       }
     })
+  }
+
+  /**
+   * Abandon the in-flight generation, if any, so a new one can start.
+   *
+   * The `LlamaCpp.LLM` node exposes no way to stop work already handed to its
+   * worker thread, so the model keeps generating and its reply is discarded when
+   * it lands. Safe to call when nothing is pending.
+   *
+   * That discarding assumes the node still reports a generation nobody is waiting
+   * for. If it turns out not to, the count is left one too high and the following
+   * reply is dropped as well — which the generate() timeout then clears.
+   */
+  cancelGeneration(): void {
+    const pending = this.pendingGeneration
+    if (!pending) {
+      return
+    }
+    this.staleGenerations += 1
+    this.settleGeneration()
+    pending.reject(this.makeError('GENERATION_CANCELLED', 'The reply was cancelled'))
   }
 
   /** Clear the in-flight generation and return to a resting state. */
@@ -349,6 +382,10 @@ class VoiceEngine {
     this.engineId = null
     this.isListening = false
     this.isSpeaking = false
+
+    // Teardown stops the node's worker and discards whatever it was generating,
+    // so nothing stale is still in flight.
+    this.staleGenerations = 0
 
     const pending = this.pendingGeneration
     if (pending) {
@@ -490,6 +527,13 @@ class VoiceEngine {
       this.setState('listening')
       this.emit('onTTSComplete', undefined)
     } else if (node === 'llmNode' && name === 'responseReceived') {
+      // The reply to a cancelled turn. Drop it whole: no resolve, no event. The
+      // node runs one FIFO worker, so replies arrive in the order they were
+      // prompted and counting is enough to tell stale from current.
+      if (this.staleGenerations > 0) {
+        this.staleGenerations -= 1
+        return
+      }
       const text = (this.extractText(e) ?? '').trim()
       const processingTime = Number(e?.data?.processingTime ?? 0)
       const pending = this.pendingGeneration
@@ -552,6 +596,7 @@ class VoiceEngine {
     this.isSpeaking = false
     this.eventsWired = false
     this.pendingGeneration = null
+    this.staleGenerations = 0
     this.config = {
       vadSensitivity: 0.5,
       sampleRate: 16000,

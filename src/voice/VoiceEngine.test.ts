@@ -257,6 +257,61 @@ describe('on-device language model', () => {
     expect(set!.params.objectURI).toBe('llmNode')
     expect(set!.params.value).toBe('be terse')
   })
+  it('cancelGeneration() rejects the pending reply and frees the slot', async () => {
+    voiceEngine.initialize('id', 'secret')
+    const pending = voiceEngine.generate('hello')
+
+    voiceEngine.cancelGeneration()
+    await expect(pending).rejects.toThrow(/cancelled/i)
+
+    // The slot is free, so the next turn is not blocked.
+    const next = voiceEngine.generate('again')
+    // First the reply to the cancelled turn — the node cannot be stopped, so it
+    // still arrives — then the one we are waiting for.
+    native.emit(
+      JSON.stringify({
+        objectURI: 'llmNode',
+        name: 'responseReceived',
+        data: { text: 'stale', processingTime: 1 },
+      })
+    )
+    native.emit(
+      JSON.stringify({
+        objectURI: 'llmNode',
+        name: 'responseReceived',
+        data: { text: 'current', processingTime: 2 },
+      })
+    )
+
+    await expect(next).resolves.toMatchObject({ text: 'current' })
+  })
+
+  it('drops the reply to a cancelled generation entirely', async () => {
+    voiceEngine.initialize('id', 'secret')
+    const replies: string[] = []
+    voiceEngine.addListener('onLLMResponse', ({ text }) => replies.push(text))
+
+    const pending = voiceEngine.generate('hello')
+    pending.catch(() => {})
+    voiceEngine.cancelGeneration()
+
+    native.emit(
+      JSON.stringify({
+        objectURI: 'llmNode',
+        name: 'responseReceived',
+        data: { text: 'stale', processingTime: 1 },
+      })
+    )
+
+    // No listener hears it either: a cancelled turn leaves no trace.
+    expect(replies).toEqual([])
+  })
+
+  it('cancelGeneration() is a no-op when nothing is generating', () => {
+    voiceEngine.initialize('id', 'secret')
+    expect(() => voiceEngine.cancelGeneration()).not.toThrow()
+  })
+
   it('times out instead of wedging when the node never replies', async () => {
     jest.useFakeTimers()
     voiceEngine.initialize('id', 'secret')
