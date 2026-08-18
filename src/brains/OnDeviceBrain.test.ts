@@ -80,12 +80,10 @@ describe('reply', () => {
   )
 
   it('leaves a reply that merely contains a colon alone', async () => {
-    jest
-      .mocked(voiceEngine.generate)
-      .mockResolvedValueOnce({
-        text: 'Vienna has three: palaces, cafes, music.',
-        processingTime: 1,
-      })
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({
+      text: 'Vienna has three: palaces, cafes, music.',
+      processingTime: 1,
+    })
 
     const reply = await brain.reply('hello', [])
 
@@ -122,6 +120,38 @@ describe('reply', () => {
     // for it even though the first brain is in sync.
     await other.reply('and again', [user('hello'), assistant('reply')])
     expect(voiceEngine.resetConversation).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('switching brains mid-conversation', () => {
+  it('replays the turns the cloud answered, then goes back to incremental', async () => {
+    await brain.reply('what should I see in Vienna?', [])
+    jest.clearAllMocks()
+
+    // Two cloud turns happened: the transcript grew without the node generating.
+    const afterCloud = [
+      user('what should I see in Vienna?'),
+      assistant('The Schönbrunn Palace.'),
+      user('and after that?'),
+      assistant('The Hofburg.'),
+    ]
+
+    await brain.reply('remind me where we started', afterCloud)
+
+    expect(voiceEngine.resetConversation).toHaveBeenCalled()
+    const prompt = jest.mocked(voiceEngine.generate).mock.calls[0][0]
+    expect(prompt).toContain('You: The Schönbrunn Palace.')
+    expect(prompt).toContain('You: The Hofburg.')
+
+    // Caught up, so the turn after the switch costs nothing extra.
+    jest.clearAllMocks()
+    await brain.reply('anything else?', [
+      ...afterCloud,
+      user('remind me where we started'),
+      assistant('reply'),
+    ])
+    expect(voiceEngine.resetConversation).not.toHaveBeenCalled()
+    expect(voiceEngine.generate).toHaveBeenCalledWith('anything else?')
   })
 })
 

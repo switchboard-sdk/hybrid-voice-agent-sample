@@ -9,10 +9,10 @@ transcript.
 Built with the [Switchboard SDK](https://switchboard.audio). The on-device voice
 pipeline comes from [EdgeSpeech](https://github.com/switchboard-sdk/EdgeSpeech).
 
-> **Status: skeleton.** The on-device speech pipeline runs today, and both brains
-> sit behind one interface. The router and the toggle that switches between them
-> are still to come — for now the brain is chosen by one import in
-> `src/screens/ConversationScreen.tsx`.
+> **Status: early.** The on-device speech pipeline runs, both brains sit behind one
+> interface, and you can switch between them mid-conversation. The conversation
+> screen is still EdgeSpeech's example rather than the travel-agent demo, and the
+> model is bundled rather than downloaded on first launch.
 
 ## Requirements
 
@@ -73,6 +73,7 @@ src/
     types.ts                the Brain interface and the shared system prompt
     OnDeviceBrain.ts        the LlamaCpp.LLM node
     CloudBrain.ts           a cloud LLM over HTTP
+    router.ts               which brain answers — the file to change
   screens/                  UI
 modules/edgespeech-native/  the only native code: a C++ TurboModule + podspec
 scripts/postinstall.js      framework download
@@ -131,6 +132,31 @@ the on-device node stops within a token and drops the reply it was building,
 keeping the conversation. Either way the transcript is left holding what the user
 said with no answer to it, which is a state the next turn continues from normally
 — so interrupting costs nothing beyond the reply you chose not to hear.
+
+### Swapping the brain
+
+`src/brains/router.ts` is the only file that names the implementations. Everything
+else talks to the `Brain` interface and never learns which one it got, so a fork
+changes that one file:
+
+```ts
+export const brains: readonly Brain[] = [onDeviceBrain, cloudBrain]
+
+export function route(preferred: BrainId): Brain {
+  return brains.find((brain) => brain.id === preferred) ?? onDeviceBrain
+}
+```
+
+Adding a third brain means writing a class that implements `Brain`, constructing it
+there, and adding it to `brains` — the picker in the UI is rendered from that list,
+so it appears on its own. Routing on something other than the user's choice means
+changing `route`, which is handed the selection and can consult whatever it likes
+instead.
+
+The switch works mid-conversation. Both brains are handed the same transcript on
+every turn, so the cloud picks up where the device left off and vice versa — the
+on-device node just pays one re-prefill at the moment of the switch, for the
+reasons in [Conversation history](#conversation-history).
 
 ### Cloud credentials
 
