@@ -12,15 +12,18 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
-import type { ConversationMessage } from '../services/chatService'
-import { replyOnDevice, resetOnDeviceConversation } from '../services/onDeviceChat'
+import { onDeviceBrain, type ConversationMessage } from '../brains'
 import { useEdgeSpeech } from '../voice'
 
+/** Which brain answers. Swapping this line for `cloudBrain` is the whole change. */
+const brain = onDeviceBrain
+
+/** A turn that was abandoned rather than failing. */
+const isCancelled = (error: unknown): boolean => (error as { code?: string })?.code === 'CANCELLED'
+
 /**
- * The demo screen, carried over from EdgeSpeech's example app: transcript,
- * voice-state indicator and interrupt markers. SWI-6789 rebuilds this as the
- * travel-agent conversation screen with per-turn timings and a badge for which
- * brain answered.
+ * The demo screen: transcript, voice-state indicator, interrupt markers, and the
+ * time the last reply took.
  */
 export function ConversationScreen(): React.JSX.Element {
   const {
@@ -38,38 +41,67 @@ export function ConversationScreen(): React.JSX.Element {
   const [textToSpeak, setTextToSpeak] = useState('Hello from the on-device voice agent!')
   const [conversationMode, setConversationMode] = useState(false)
   const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([])
-  const [lastReplyMs, setLastReplyMs] = useState<number | null>(null)
+  const [lastReply, setLastReply] = useState<{ label: string; ms: number } | null>(null)
+  // Tracked here rather than read off voiceState: only the on-device brain drives
+  // the engine's 'processing' state, and the indicator has to mean the same thing
+  // for both.
+  const [thinking, setThinking] = useState(false)
   const chatScrollRef = useRef<ScrollView>(null)
   const prevVoiceStateRef = useRef(voiceState)
 
+  // The transcript the brain is handed. Mirrors conversationHistory so a turn
+  // that starts before React has re-rendered still sees every earlier message —
+  // which now happens routinely, because a turn can be interrupted by the next.
+  const historyRef = useRef<ConversationMessage[]>([])
+
+  // The turn in flight, so a new one can abandon it.
+  const turnRef = useRef<AbortController | null>(null)
+
+  const appendMessage = useCallback((message: ConversationMessage) => {
+    historyRef.current = [...historyRef.current, message]
+    setConversationHistory(historyRef.current)
+    setTimeout(() => chatScrollRef.current?.scrollToEnd({ animated: true }), 50)
+  }, [])
+
   const handleConversationResponse = useCallback(
-    async (userMessage: ConversationMessage) => {
-      await stopListening()
-      let response: string
+    async (userText: string, history: ConversationMessage[]) => {
+      // The mic stays live while the brain thinks, so the user can talk over the
+      // pause. Doing so lands here again and abandons the turn below.
+      turnRef.current?.abort()
+      const turn = new AbortController()
+      turnRef.current = turn
+      setThinking(true)
+
       try {
-        const reply = await replyOnDevice(userMessage, conversationHistory)
-        response = reply.text
-        setLastReplyMs(reply.processingTime)
+        const reply = await brain.reply(userText, history, turn.signal)
+        setThinking(false)
+        setLastReply({ label: brain.label, ms: reply.processingTime })
+        appendMessage({ role: 'assistant', content: reply.text })
+        await speak(reply.text)
       } catch (error) {
+        if (isCancelled(error)) {
+          return
+        }
         console.error('Chat error:', error)
         Alert.alert('Chat Error', (error as Error).message)
-        return
+      } finally {
+        // Only if this turn is still the current one: an interrupting turn has
+        // already claimed the slot and put the indicator back up.
+        if (turnRef.current === turn) {
+          turnRef.current = null
+          setThinking(false)
+        }
       }
-      const assistantMessage: ConversationMessage = { role: 'assistant', content: response }
-      setConversationHistory((prev) => [...prev, assistantMessage])
-      setTimeout(() => chatScrollRef.current?.scrollToEnd({ animated: true }), 50)
-      await speak(response)
     },
-    [conversationHistory, stopListening, speak]
+    [appendMessage, speak]
   )
 
   // Register interrupted callback
   useEffect(() => {
     onInterrupted(() => {
-      setConversationHistory((prev) => [...prev, { role: 'assistant', content: '[interrupted]' }])
-      setTimeout(() => chatScrollRef.current?.scrollToEnd({ animated: true }), 50)
+      appendMessage({ role: 'assistant', content: '[interrupted]' })
     })
-  }, [onInterrupted])
+  }, [onInterrupted, appendMessage])
 
   // Register final-transcript callback
   useEffect(() => {
@@ -81,15 +113,19 @@ export function ConversationScreen(): React.JSX.Element {
         return
       }
 
-      const userMessage: ConversationMessage = { role: 'user', content }
-      setConversationHistory((prev) => [...prev, userMessage])
-      setTimeout(() => chatScrollRef.current?.scrollToEnd({ animated: true }), 50)
+      // Read before appending: the brain gets the conversation up to but
+      // excluding this turn.
+      const history = historyRef.current
+      appendMessage({ role: 'user', content })
 
       if (conversationMode) {
-        handleConversationResponse(userMessage)
+        handleConversationResponse(content, history)
       }
     })
-  }, [onTranscriptComplete, conversationMode, handleConversationResponse])
+  }, [onTranscriptComplete, conversationMode, handleConversationResponse, appendMessage])
+
+  // Abandon whatever is in flight when the screen goes away.
+  useEffect(() => () => turnRef.current?.abort(), [])
 
   // Resume listening after TTS completes in conversation mode
   useEffect(() => {
@@ -127,9 +163,11 @@ export function ConversationScreen(): React.JSX.Element {
   }
 
   const clearConversation = () => {
+    turnRef.current?.abort()
+    historyRef.current = []
     setConversationHistory([])
-    setLastReplyMs(null)
-    resetOnDeviceConversation()
+    setLastReply(null)
+    brain.reset()
   }
 
   const getStateColor = () => {
@@ -164,7 +202,9 @@ export function ConversationScreen(): React.JSX.Element {
           <View style={styles.toggleRow}>
             <View>
               <Text style={styles.sectionTitle}>Conversation Mode</Text>
-              <Text style={styles.toggleDescription}>Auto-respond using the on-device model</Text>
+              <Text style={styles.toggleDescription}>
+                Auto-respond using the {brain.label.toLowerCase()} brain
+              </Text>
             </View>
             <Switch
               value={conversationMode}
@@ -204,14 +244,16 @@ export function ConversationScreen(): React.JSX.Element {
           )}
 
           {/* Thinking Indicator */}
-          {voiceState === 'processing' && (
+          {thinking && (
             <View style={styles.thinkingContainer}>
-              <Text style={styles.thinkingText}>Thinking on device...</Text>
+              <Text style={styles.thinkingText}>Thinking...</Text>
             </View>
           )}
 
-          {voiceState !== 'processing' && lastReplyMs !== null && (
-            <Text style={styles.timingText}>On-device reply in {lastReplyMs} ms</Text>
+          {!thinking && lastReply !== null && (
+            <Text style={styles.timingText}>
+              {lastReply.label} reply in {lastReply.ms} ms
+            </Text>
           )}
         </View>
 

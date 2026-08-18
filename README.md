@@ -9,9 +9,10 @@ transcript.
 Built with the [Switchboard SDK](https://switchboard.audio). The on-device voice
 pipeline comes from [EdgeSpeech](https://github.com/switchboard-sdk/EdgeSpeech).
 
-> **Status: skeleton.** The on-device speech pipeline runs today. The on-device
-> language model is linked but not yet in the pipeline, and the brain interface,
-> router and toggle are still to come.
+> **Status: skeleton.** The on-device speech pipeline runs today, and both brains
+> sit behind one interface. The router and the toggle that switches between them
+> are still to come — for now the brain is chosen by one import in
+> `src/screens/ConversationScreen.tsx`.
 
 ## Requirements
 
@@ -49,6 +50,8 @@ what is missing or has changed. That matters while we track `develop`, which is 
 moving channel: when the release pipeline rebuilds it, a re-run picks the new
 build up on its own.
 
+The install script also honours a few build-time variables:
+
 | Variable                  | Effect                                                            |
 | ------------------------- | ----------------------------------------------------------------- |
 | `SWITCHBOARD_SDK_CHANNEL` | Bucket path to pull from. Defaults to `develop`.                  |
@@ -66,8 +69,11 @@ src/
     SwitchboardClient.ts    typed wrapper over the SDK's JSON-RPC interface
     EdgeSpeechProvider.tsx  configuration and lifecycle
     hook.ts                 useEdgeSpeech()
+  brains/                   the two interchangeable brains
+    types.ts                the Brain interface and the shared system prompt
+    OnDeviceBrain.ts        the LlamaCpp.LLM node
+    CloudBrain.ts           a cloud LLM over HTTP
   screens/                  UI
-  services/                 cloud chat (placeholder)
 modules/edgespeech-native/  the only native code: a C++ TurboModule + podspec
 scripts/postinstall.js      framework download
 ```
@@ -76,6 +82,67 @@ The native layer is deliberately tiny: one JSON-RPC string channel plus an event
 stream. The entire audio graph — voice activity detection, transcription,
 synthesis, barge-in — is authored in TypeScript above it, so changing the
 pipeline never means touching native code.
+
+## The two brains
+
+Speech recognition and synthesis are always on the device. The only thing that
+swaps is what answers, and both answerers implement the same interface:
+
+```ts
+interface Brain {
+  readonly id: BrainId
+  readonly label: string
+  reply(
+    transcript: string,
+    history: ConversationMessage[],
+    signal?: AbortSignal
+  ): Promise<BrainReply>
+  reset(instructions?: string): void
+}
+```
+
+Neither owns the conversation — the transcript is handed in on every turn — so
+swapping brains mid-conversation carries the context across rather than starting
+over. A reply comes back saying which brain produced it and how long it took, so
+a turn can be labelled with both.
+
+`OnDeviceBrain` wraps the `LlamaCpp.LLM` node. Because that node takes a single
+string rather than a list of turns, a replayed conversation has its roles spelled
+out in the prompt text.
+
+`CloudBrain` calls OpenAI's chat completions API, which takes the transcript as it
+is — the roles the app already tracks are the roles the model expects. On top of
+that it handles what a network needs: a 15-second timeout, one retry on a timeout,
+a dropped connection, a 429 or a 5xx, and prompt cancellation when the user
+interrupts. The provider-specific parts are `buildRequest`, `parseReply` and
+`parseError` at the top of `CloudBrain.ts` — those three functions and two
+constants are the whole of what changes to point it somewhere else.
+
+**Cancelling a turn** means abandoning the reply, not always stopping the work.
+The cloud request really is aborted. The on-device node has no cancel action, so
+the model finishes generating unheard and the engine discards the reply when it
+lands — which leaves the node holding a turn the transcript does not account for,
+so the next turn replays (below).
+
+### Cloud credentials
+
+The cloud brain needs an [OpenAI API key](https://platform.openai.com/api-keys) in
+`EXPO_PUBLIC_CLOUD_LLM_API_KEY`. Two optional companions:
+`EXPO_PUBLIC_CLOUD_LLM_MODEL` (defaults to `gpt-4o-mini`) and
+`EXPO_PUBLIC_CLOUD_LLM_BASE_URL`. The on-device brain needs none of them, and runs
+with no account at all — selecting the cloud brain without a key fails with a
+message saying exactly that.
+
+`EXPO_PUBLIC_` variables are compiled into the JS bundle by Expo, exactly like the
+Switchboard credentials above. **A key put there is not a secret: it can be
+extracted from any build that ships.** That is fine for a key of your own on your
+own device. It is not fine for a shared or billable key, and not fine for anything
+distributed — including TestFlight.
+
+For those, put a proxy you control between the app and the provider, keep the key
+server-side, and point `EXPO_PUBLIC_CLOUD_LLM_BASE_URL` at the proxy. Nothing in
+the app changes: it already sends the same chat-completions request, and the key it
+sends is then whatever the proxy expects rather than the real one.
 
 ## Conversation history
 
@@ -89,14 +156,14 @@ So the two are kept in step by tracking how many messages the node has ingested:
 
 - **In sync** — the usual case — a turn sends only the new user message, so the
   node keeps its cache warm and the reply comes back fast.
-- **Diverged** — the transcript contains turns the node never saw, because a
-  cloud reply landed or the brain was switched mid-conversation — the node is
-  reset and the conversation is replayed as a single prompt.
+- **Diverged** — the node and the transcript disagree, because a cloud reply
+  landed, the brain was switched mid-conversation, or a generation was abandoned
+  and the node answered a turn nobody heard — the node is reset and the
+  conversation is replayed as a single prompt.
 
 That costs one re-prefill at the moment of a switch and nothing during a normal
-exchange. It is also what lets the toggle in SWI-6788 keep context: both brains
-read and write the same transcript, so flipping mid-conversation continues rather
-than restarts.
+exchange. It is also what lets a switch keep context: both brains read and write
+the same transcript, so flipping mid-conversation continues rather than restarts.
 
 ## Development
 
