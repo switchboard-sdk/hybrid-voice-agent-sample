@@ -54,9 +54,15 @@ export interface Brain {
  * The persona both brains share, so a turn reads the same whichever one served
  * it. Tuned for the smaller of the two: what the 1B on-device model can follow,
  * a cloud model can follow as well.
+ *
+ * Deliberately minimal — enough that the answers match the travel framing on
+ * screen. Hand-tuning it against the small model is its own step.
  */
 export const DEFAULT_SYSTEM_PROMPT =
-  'You are a helpful, friendly voice assistant. Keep responses concise (1-2 sentences) since they will be spoken aloud.'
+  'You are the voice of a travel assistant app. Help the traveller with destinations, ' +
+  'getting around, and what to do when plans change. Answer in one or two short ' +
+  'sentences, because your answer is spoken aloud. Never invent flight numbers, ' +
+  'schedules or prices.'
 
 /** Build an Error carrying a machine `code`, matching VoiceEngine's convention. */
 export function brainError(code: string, message: string): Error {
