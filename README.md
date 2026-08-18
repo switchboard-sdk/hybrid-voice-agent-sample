@@ -108,7 +108,10 @@ a turn can be labelled with both.
 
 `OnDeviceBrain` wraps the `LlamaCpp.LLM` node. Because that node takes a single
 string rather than a list of turns, a replayed conversation has its roles spelled
-out in the prompt text.
+out in the prompt text — which makes it look like a transcript, and a 1B model will
+carry on writing one rather than answering. So the replay fences the history off as
+background and ends on an instruction, and a reply that still opens with a role
+label has it stripped before it reaches the transcript or the speaker.
 
 `CloudBrain` calls OpenAI's chat completions API, which takes the transcript as it
 is — the roles the app already tracks are the roles the model expects. On top of
@@ -118,11 +121,16 @@ interrupts. The provider-specific parts are `buildRequest`, `parseReply` and
 `parseError` at the top of `CloudBrain.ts` — those three functions and two
 constants are the whole of what changes to point it somewhere else.
 
-**Cancelling a turn** means abandoning the reply, not always stopping the work.
-The cloud request really is aborted. The on-device node has no cancel action, so
-the model finishes generating unheard and the engine discards the reply when it
-lands — which leaves the node holding a turn the transcript does not account for,
-so the next turn replays (below).
+The transcript holds only what was actually said. An interruption is recorded
+against the reply it cut off rather than added as a turn of its own — a message
+reading `[interrupted]` would be a turn neither brain ever produced, and it would
+put the on-device node permanently one message behind.
+
+**Cancelling a turn** stops the work on both paths. The cloud request is aborted;
+the on-device node stops within a token and drops the reply it was building,
+keeping the conversation. Either way the transcript is left holding what the user
+said with no answer to it, which is a state the next turn continues from normally
+— so interrupting costs nothing beyond the reply you chose not to hear.
 
 ### Cloud credentials
 
@@ -157,8 +165,7 @@ So the two are kept in step by tracking how many messages the node has ingested:
 - **In sync** — the usual case — a turn sends only the new user message, so the
   node keeps its cache warm and the reply comes back fast.
 - **Diverged** — the node and the transcript disagree, because a cloud reply
-  landed, the brain was switched mid-conversation, or a generation was abandoned
-  and the node answered a turn nobody heard — the node is reset and the
+  landed or the brain was switched mid-conversation — the node is reset and the
   conversation is replayed as a single prompt.
 
 That costs one re-prefill at the moment of a switch and nothing during a normal

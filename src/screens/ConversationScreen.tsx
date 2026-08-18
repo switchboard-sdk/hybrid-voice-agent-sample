@@ -46,6 +46,10 @@ export function ConversationScreen(): React.JSX.Element {
   // the engine's 'processing' state, and the indicator has to mean the same thing
   // for both.
   const [thinking, setThinking] = useState(false)
+  // Which replies were cut off mid-sentence. An interruption annotates a turn, it
+  // is not a turn of its own — and it has to stay out of the transcript, because
+  // both brains read that and neither ever generated a message saying so.
+  const [interrupted, setInterrupted] = useState<ReadonlySet<number>>(new Set())
   const chatScrollRef = useRef<ScrollView>(null)
   const prevVoiceStateRef = useRef(voiceState)
 
@@ -99,9 +103,15 @@ export function ConversationScreen(): React.JSX.Element {
   // Register interrupted callback
   useEffect(() => {
     onInterrupted(() => {
-      appendMessage({ role: 'assistant', content: '[interrupted]' })
+      // Fired before the transcript of what the user said over it, so the last
+      // message is still the reply that was talked over.
+      const cutOff = historyRef.current.length - 1
+      if (cutOff < 0) {
+        return
+      }
+      setInterrupted((prev) => new Set(prev).add(cutOff))
     })
-  }, [onInterrupted, appendMessage])
+  }, [onInterrupted])
 
   // Register final-transcript callback
   useEffect(() => {
@@ -166,6 +176,7 @@ export function ConversationScreen(): React.JSX.Element {
     turnRef.current?.abort()
     historyRef.current = []
     setConversationHistory([])
+    setInterrupted(new Set())
     setLastReply(null)
     brain.reset()
   }
@@ -233,10 +244,13 @@ export function ConversationScreen(): React.JSX.Element {
                     style={[
                       styles.chatBubble,
                       msg.role === 'user' ? styles.userBubble : styles.assistantBubble,
-                      msg.content === '[interrupted]' && styles.interruptedBubble,
+                      interrupted.has(index) && styles.interruptedBubble,
                     ]}>
                     <Text style={styles.chatRole}>{msg.role === 'user' ? 'You' : 'Assistant'}</Text>
                     <Text style={styles.chatText}>{msg.content}</Text>
+                    {interrupted.has(index) && (
+                      <Text style={styles.interruptedNote}>interrupted</Text>
+                    )}
                   </View>
                 ))}
               </ScrollView>
@@ -469,8 +483,12 @@ const styles = StyleSheet.create({
   },
   interruptedBubble: {
     backgroundColor: '#fce4ec',
-    alignSelf: 'center',
-    borderRadius: 12,
+  },
+  interruptedNote: {
+    fontSize: 10,
+    fontStyle: 'italic',
+    color: '#ad1457',
+    marginTop: 4,
   },
   chatRole: {
     fontSize: 10,

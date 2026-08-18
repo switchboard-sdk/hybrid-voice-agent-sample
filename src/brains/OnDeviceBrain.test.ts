@@ -54,9 +54,42 @@ describe('reply', () => {
 
     expect(voiceEngine.resetConversation).toHaveBeenCalled()
     const prompt = jest.mocked(voiceEngine.generate).mock.calls[0][0]
-    expect(prompt).toContain('User: hello')
-    expect(prompt).toContain('Assistant: answered elsewhere')
-    expect(prompt).toContain('User: follow up')
+    expect(prompt).toContain('Me: hello')
+    expect(prompt).toContain('You: answered elsewhere')
+    expect(prompt).toContain('My new message is: follow up')
+  })
+
+  it('ends the replay on an instruction, not another transcript line', async () => {
+    // A prompt that ends mid-transcript invites the model to write the next line
+    // rather than answer.
+    await brain.reply('follow up', [user('hello'), assistant('hi')])
+
+    const prompt = jest.mocked(voiceEngine.generate).mock.calls[0][0]
+    expect(prompt.trimEnd().split('\n').pop()).toMatch(/^Reply to my new message/)
+  })
+
+  it.each(['Me: sure', 'You: sure', 'Assistant: sure', '  user:  sure'])(
+    'drops a transcript label the model wrote instead of answering (%s)',
+    async (raw) => {
+      jest.mocked(voiceEngine.generate).mockResolvedValueOnce({ text: raw, processingTime: 1 })
+
+      const reply = await brain.reply('hello', [])
+
+      expect(reply.text).toBe('sure')
+    }
+  )
+
+  it('leaves a reply that merely contains a colon alone', async () => {
+    jest
+      .mocked(voiceEngine.generate)
+      .mockResolvedValueOnce({
+        text: 'Vienna has three: palaces, cafes, music.',
+        processingTime: 1,
+      })
+
+    const reply = await brain.reply('hello', [])
+
+    expect(reply.text).toBe('Vienna has three: palaces, cafes, music.')
   })
 
   it('is back in sync after a replay, so the next turn is incremental', async () => {
@@ -101,7 +134,7 @@ describe('cancellation', () => {
     expect(voiceEngine.generate).not.toHaveBeenCalled()
   })
 
-  it('abandons the generation and forces the next turn to replay', async () => {
+  it('abandons the generation and keeps the next turn incremental', async () => {
     const controller = new AbortController()
     let rejectGeneration: (error: Error) => void = () => {}
     const stuck = new Promise<LLMReply>((_, reject) => {
@@ -119,10 +152,11 @@ describe('cancellation', () => {
     await expect(turn).rejects.toThrow(/cancelled/i)
     expect(voiceEngine.cancelGeneration).toHaveBeenCalled()
 
-    // The node was left holding a turn the transcript does not account for, so
-    // the next one starts over.
-    await brain.reply('never mind', [])
-    expect(voiceEngine.resetConversation).toHaveBeenCalled()
+    // The node kept the conversation and the user's message, dropping only the
+    // reply — which is what the transcript holds too, so nothing needs replaying.
+    await brain.reply('never mind', [user('hello')])
+    expect(voiceEngine.resetConversation).not.toHaveBeenCalled()
+    expect(voiceEngine.generate).toHaveBeenLastCalledWith('never mind')
   })
 })
 
