@@ -12,11 +12,8 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
-import { onDeviceBrain, type ConversationMessage } from '../brains'
+import { brains, route, type BrainId, type ConversationMessage } from '../brains'
 import { useEdgeSpeech } from '../voice'
-
-/** Which brain answers. Swapping this line for `cloudBrain` is the whole change. */
-const brain = onDeviceBrain
 
 /** A turn that was abandoned rather than failing. */
 const isCancelled = (error: unknown): boolean => (error as { code?: string })?.code === 'CANCELLED'
@@ -40,6 +37,7 @@ export function ConversationScreen(): React.JSX.Element {
 
   const [textToSpeak, setTextToSpeak] = useState('Hello from the on-device voice agent!')
   const [conversationMode, setConversationMode] = useState(false)
+  const [preferred, setPreferred] = useState<BrainId>('on-device')
   const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([])
   const [lastReply, setLastReply] = useState<{ label: string; ms: number } | null>(null)
   // Tracked here rather than read off voiceState: only the on-device brain drives
@@ -50,6 +48,8 @@ export function ConversationScreen(): React.JSX.Element {
   // is not a turn of its own — and it has to stay out of the transcript, because
   // both brains read that and neither ever generated a message saying so.
   const [interrupted, setInterrupted] = useState<ReadonlySet<number>>(new Set())
+
+  const brain = route(preferred)
   const chatScrollRef = useRef<ScrollView>(null)
   const prevVoiceStateRef = useRef(voiceState)
 
@@ -97,7 +97,7 @@ export function ConversationScreen(): React.JSX.Element {
         }
       }
     },
-    [appendMessage, speak]
+    [brain, appendMessage, speak]
   )
 
   // Register interrupted callback
@@ -178,7 +178,7 @@ export function ConversationScreen(): React.JSX.Element {
     setConversationHistory([])
     setInterrupted(new Set())
     setLastReply(null)
-    brain.reset()
+    brains.forEach((candidate) => candidate.reset())
   }
 
   const getStateColor = () => {
@@ -224,6 +224,28 @@ export function ConversationScreen(): React.JSX.Element {
               thumbColor={conversationMode ? '#2196F3' : '#f4f3f4'}
             />
           </View>
+
+          {/* Brain picker. Rendered from the router's list, so a third brain
+              appears here without touching this screen. */}
+          <View style={styles.brainPicker}>
+            {brains.map((candidate) => {
+              const selected = candidate.id === preferred
+              return (
+                <TouchableOpacity
+                  key={candidate.id}
+                  style={[styles.brainOption, selected && styles.brainOptionSelected]}
+                  onPress={() => setPreferred(candidate.id)}>
+                  <Text
+                    style={[styles.brainOptionText, selected && styles.brainOptionTextSelected]}>
+                    {candidate.label}
+                  </Text>
+                </TouchableOpacity>
+              )
+            })}
+          </View>
+          <Text style={styles.brainPickerHint}>
+            Switching keeps the conversation — both brains read the same transcript.
+          </Text>
 
           {/* Chat History */}
           {conversationHistory.length > 0 && (
@@ -435,6 +457,36 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+  },
+  brainPicker: {
+    flexDirection: 'row',
+    marginTop: 15,
+    borderWidth: 1,
+    borderColor: '#dee2e6',
+    borderRadius: 8,
+    overflow: 'hidden',
+  },
+  brainOption: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    backgroundColor: '#f8f9fa',
+  },
+  brainOptionSelected: {
+    backgroundColor: '#2196F3',
+  },
+  brainOptionText: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#666',
+  },
+  brainOptionTextSelected: {
+    color: '#fff',
+  },
+  brainPickerHint: {
+    fontSize: 11,
+    color: '#666',
+    marginTop: 6,
   },
   toggleDescription: {
     fontSize: 12,
