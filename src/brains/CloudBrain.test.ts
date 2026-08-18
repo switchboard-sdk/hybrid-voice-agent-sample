@@ -1,5 +1,5 @@
 import { CloudBrain, type CloudBrainConfig } from './CloudBrain'
-import type { ConversationMessage } from './types'
+import { DEFAULT_SYSTEM_PROMPT, type ConversationMessage } from './types'
 
 const user = (content: string): ConversationMessage => ({ role: 'user', content })
 const assistant = (content: string): ConversationMessage => ({ role: 'assistant', content })
@@ -62,7 +62,7 @@ describe('reply', () => {
 
     const { messages, model } = sentBody(fetchImpl)
     expect(messages[0].role).toBe('system')
-    expect(messages[0].content).toContain('voice assistant')
+    expect(messages[0].content).toBe(DEFAULT_SYSTEM_PROMPT)
     expect(messages.slice(1)).toEqual([
       { role: 'user', content: 'two nights in Lisbon' },
       { role: 'assistant', content: 'booked' },

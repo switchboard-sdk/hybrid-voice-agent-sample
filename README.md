@@ -10,9 +10,9 @@ Built with the [Switchboard SDK](https://switchboard.audio). The on-device voice
 pipeline comes from [EdgeSpeech](https://github.com/switchboard-sdk/EdgeSpeech).
 
 > **Status: early.** The on-device speech pipeline runs, both brains sit behind one
-> interface, and you can switch between them mid-conversation. The conversation
-> screen is still EdgeSpeech's example rather than the travel-agent demo, and the
-> model is bundled rather than downloaded on first launch.
+> interface, and you can switch between them mid-conversation. The screen is the
+> travel-agent demo, on a deliberately minimal persona prompt that is not tuned yet.
+> The model is bundled rather than downloaded on first launch.
 
 ## Requirements
 
@@ -75,6 +75,7 @@ src/
     CloudBrain.ts           a cloud LLM over HTTP
     router.ts               which brain answers — the file to change
   screens/                  UI
+    ConversationScreen.tsx  the whole app: transcript, state, per-turn badges
 modules/edgespeech-native/  the only native code: a C++ TurboModule + podspec
 scripts/postinstall.js      framework download
 ```
@@ -83,6 +84,26 @@ The native layer is deliberately tiny: one JSON-RPC string channel plus an event
 stream. The entire audio graph — voice activity detection, transcription,
 synthesis, barge-in — is authored in TypeScript above it, so changing the
 pipeline never means touching native code.
+
+## The screen
+
+One screen, and one control: **Talk** opens the mic and every reply comes back
+spoken. The transcript is the whole surface.
+
+Each assistant turn carries the brain that answered it and the time that brain
+took — `AI · On-device · 1.2 s` — coloured per brain, so switching mid-conversation
+shows the difference rather than claiming it. The number is the brain's own
+measurement so the two paths compare like for like; the round trip, which adds
+only app overhead, goes to the console alongside it as `[turn]`. That plus the
+`[LLM]` and `[Cloud]` lines each brain logs is the whole of the telemetry — there
+is no analytics dependency.
+
+The voice is never presented as a person: the header says so, and every reply is
+labelled `AI`.
+
+Badges, timings and interrupt markers are held alongside the transcript by index
+rather than in it. Both brains read that transcript, and neither ever produced a
+message about itself.
 
 ## The two brains
 
