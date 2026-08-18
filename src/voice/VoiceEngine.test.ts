@@ -257,24 +257,23 @@ describe('on-device language model', () => {
     expect(set!.params.objectURI).toBe('llmNode')
     expect(set!.params.value).toBe('be terse')
   })
-  it('cancelGeneration() rejects the pending reply and frees the slot', async () => {
+  it('cancelGeneration() tells the node to stop and rejects the pending reply', async () => {
     voiceEngine.initialize('id', 'secret')
     const pending = voiceEngine.generate('hello')
 
     voiceEngine.cancelGeneration()
-    await expect(pending).rejects.toThrow(/cancelled/i)
 
-    // The slot is free, so the next turn is not blocked.
+    expect(findAction('cancel')?.params.objectURI).toBe('llmNode')
+    await expect(pending).rejects.toThrow(/cancelled/i)
+  })
+
+  it('frees the slot, so the next turn is not blocked', async () => {
+    voiceEngine.initialize('id', 'secret')
+    const pending = voiceEngine.generate('hello')
+    pending.catch(() => {})
+    voiceEngine.cancelGeneration()
+
     const next = voiceEngine.generate('again')
-    // First the reply to the cancelled turn — the node cannot be stopped, so it
-    // still arrives — then the one we are waiting for.
-    native.emit(
-      JSON.stringify({
-        objectURI: 'llmNode',
-        name: 'responseReceived',
-        data: { text: 'stale', processingTime: 1 },
-      })
-    )
     native.emit(
       JSON.stringify({
         objectURI: 'llmNode',
@@ -286,30 +285,41 @@ describe('on-device language model', () => {
     await expect(next).resolves.toMatchObject({ text: 'current' })
   })
 
-  it('drops the reply to a cancelled generation entirely', async () => {
+  it('emits onGenerationCancelled when the node confirms it dropped the reply', () => {
     voiceEngine.initialize('id', 'secret')
-    const replies: string[] = []
-    voiceEngine.addListener('onLLMResponse', ({ text }) => replies.push(text))
+    let confirmations = 0
+    voiceEngine.addListener('onGenerationCancelled', () => (confirmations += 1))
 
+    native.emit(JSON.stringify({ objectURI: 'llmNode', name: 'generationCancelled' }))
+
+    expect(confirmations).toBe(1)
+  })
+
+  it('a late confirmation does not disturb a generation that has already started', async () => {
+    voiceEngine.initialize('id', 'secret')
     const pending = voiceEngine.generate('hello')
     pending.catch(() => {})
     voiceEngine.cancelGeneration()
 
+    const next = voiceEngine.generate('again')
+    // The node's confirmation for the cancelled turn arrives after the new prompt.
+    native.emit(JSON.stringify({ objectURI: 'llmNode', name: 'generationCancelled' }))
     native.emit(
       JSON.stringify({
         objectURI: 'llmNode',
         name: 'responseReceived',
-        data: { text: 'stale', processingTime: 1 },
+        data: { text: 'current', processingTime: 1 },
       })
     )
 
-    // No listener hears it either: a cancelled turn leaves no trace.
-    expect(replies).toEqual([])
+    await expect(next).resolves.toMatchObject({ text: 'current' })
   })
 
   it('cancelGeneration() is a no-op when nothing is generating', () => {
     voiceEngine.initialize('id', 'secret')
+
     expect(() => voiceEngine.cancelGeneration()).not.toThrow()
+    expect(findAction('cancel')).toBeUndefined()
   })
 
   it('times out instead of wedging when the node never replies', async () => {

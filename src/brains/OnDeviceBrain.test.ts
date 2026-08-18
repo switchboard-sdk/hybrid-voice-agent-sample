@@ -101,7 +101,7 @@ describe('cancellation', () => {
     expect(voiceEngine.generate).not.toHaveBeenCalled()
   })
 
-  it('abandons the generation and forces the next turn to replay', async () => {
+  it('abandons the generation and keeps the next turn incremental', async () => {
     const controller = new AbortController()
     let rejectGeneration: (error: Error) => void = () => {}
     const stuck = new Promise<LLMReply>((_, reject) => {
@@ -119,10 +119,11 @@ describe('cancellation', () => {
     await expect(turn).rejects.toThrow(/cancelled/i)
     expect(voiceEngine.cancelGeneration).toHaveBeenCalled()
 
-    // The node was left holding a turn the transcript does not account for, so
-    // the next one starts over.
-    await brain.reply('never mind', [])
-    expect(voiceEngine.resetConversation).toHaveBeenCalled()
+    // The node kept the conversation and the user's message, dropping only the
+    // reply — which is what the transcript holds too, so nothing needs replaying.
+    await brain.reply('never mind', [user('hello')])
+    expect(voiceEngine.resetConversation).not.toHaveBeenCalled()
+    expect(voiceEngine.generate).toHaveBeenLastCalledWith('never mind')
   })
 })
 

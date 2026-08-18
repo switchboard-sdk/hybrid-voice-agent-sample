@@ -9,12 +9,6 @@ import {
 } from './types'
 
 /**
- * Sentinel for "the node holds turns the transcript does not account for".
- * No message count can equal it, so the next turn always replays.
- */
-const DIVERGED = -1
-
-/**
  * The `LlamaCpp.LLM` node as a brain.
  *
  * App state owns the transcript, but the node keeps its own rolling context that
@@ -54,7 +48,7 @@ export class OnDeviceBrain implements Brain {
     console.log(`[LLM] ${inSync ? 'incremental' : 'replaying transcript'}:`, prompt)
 
     const startedAt = Date.now()
-    const reply = await this.generate(prompt, signal)
+    const reply = await this.generate(prompt, history.length, signal)
     const processingTime = Date.now() - startedAt
     console.log(
       `[LLM] reply in ${reply.processingTime}ms (${processingTime}ms round trip):`,
@@ -70,14 +64,18 @@ export class OnDeviceBrain implements Brain {
   /**
    * Await the node's reply, giving up early if `signal` fires.
    *
-   * The node cannot be told to stop, so cancelling abandons the turn: the model
-   * finishes unheard, the engine drops the reply when it lands, and the node is
-   * left holding a turn the transcript will not account for — hence DIVERGED, so
-   * the next turn resets and replays.
+   * A cancelled turn leaves the node holding the conversation plus the user's
+   * message, with no reply — which is exactly what the transcript holds too, since
+   * the app records what was said before asking for an answer. So the counter
+   * moves on by one and the next turn stays incremental: no reset, no replay.
    */
-  private async generate(prompt: string, signal?: AbortSignal): Promise<LLMReply> {
+  private async generate(
+    prompt: string,
+    historyLength: number,
+    signal?: AbortSignal
+  ): Promise<LLMReply> {
     const onAbort = () => {
-      this.syncedMessages = DIVERGED
+      this.syncedMessages = historyLength + 1
       voiceEngine.cancelGeneration()
     }
     signal?.addEventListener('abort', onAbort)
