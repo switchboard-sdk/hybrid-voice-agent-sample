@@ -315,6 +315,18 @@ describe('on-device language model', () => {
     await expect(next).resolves.toMatchObject({ text: 'current' })
   })
 
+  it('resetConversation settles a pending reply instead of leaving it hanging', async () => {
+    voiceEngine.initialize('id', 'secret')
+    await voiceEngine.listen()
+    const pending = voiceEngine.generate('hello')
+
+    // Writing instructions makes the node abandon the generation, so the caller
+    // must not be left waiting out the timeout for a reply that never comes.
+    voiceEngine.resetConversation('be brief')
+
+    await expect(pending).rejects.toThrow(/cancelled/i)
+  })
+
   it('cancelGeneration() is a no-op when nothing is generating', () => {
     voiceEngine.initialize('id', 'secret')
 

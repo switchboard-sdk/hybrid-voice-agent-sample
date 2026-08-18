@@ -108,7 +108,10 @@ a turn can be labelled with both.
 
 `OnDeviceBrain` wraps the `LlamaCpp.LLM` node. Because that node takes a single
 string rather than a list of turns, a replayed conversation has its roles spelled
-out in the prompt text.
+out in the prompt text — which makes it look like a transcript, and a 1B model will
+carry on writing one rather than answering. So the replay fences the history off as
+background and ends on an instruction, and a reply that still opens with a role
+label has it stripped before it reaches the transcript or the speaker.
 
 `CloudBrain` calls OpenAI's chat completions API, which takes the transcript as it
 is — the roles the app already tracks are the roles the model expects. On top of
@@ -117,6 +120,11 @@ a dropped connection, a 429 or a 5xx, and prompt cancellation when the user
 interrupts. The provider-specific parts are `buildRequest`, `parseReply` and
 `parseError` at the top of `CloudBrain.ts` — those three functions and two
 constants are the whole of what changes to point it somewhere else.
+
+The transcript holds only what was actually said. An interruption is recorded
+against the reply it cut off rather than added as a turn of its own — a message
+reading `[interrupted]` would be a turn neither brain ever produced, and it would
+put the on-device node permanently one message behind.
 
 **Cancelling a turn** stops the work on both paths. The cloud request is aborted;
 the on-device node stops within a token and drops the reply it was building,

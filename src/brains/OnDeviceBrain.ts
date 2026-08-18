@@ -9,6 +9,15 @@ import {
 } from './types'
 
 /**
+ * Drop a transcript label the model wrote instead of just answering. Rare, but a
+ * reply starting `Me:` must not be spoken aloud or stored as the assistant's turn,
+ * where it would go on to poison every later prompt.
+ */
+function stripRoleLabel(text: string): string {
+  return text.replace(/^\s*(?:Me|You|User|Assistant)\s*:\s*/i, '')
+}
+
+/**
  * The `LlamaCpp.LLM` node as a brain.
  *
  * App state owns the transcript, but the node keeps its own rolling context that
@@ -21,7 +30,7 @@ export class OnDeviceBrain implements Brain {
   readonly id: BrainId = 'on-device'
   readonly label = 'On-device'
 
-  /** Messages of the app transcript the node has ingested, or DIVERGED. */
+  /** How many messages of the app transcript the node has ingested. */
   private syncedMessages = 0
 
   /** Clear the node's conversation and set the system prompt. */
@@ -58,7 +67,7 @@ export class OnDeviceBrain implements Brain {
     // The node now holds every message up to and including the reply it made.
     this.syncedMessages = history.length + 2
 
-    return { text: reply.text, brain: this.id, processingTime }
+    return { text: stripRoleLabel(reply.text), brain: this.id, processingTime }
   }
 
   /**
@@ -95,15 +104,24 @@ export class OnDeviceBrain implements Brain {
    * Catch the node up: the whole conversation, plus this turn, as one prompt.
    *
    * The node takes a single string rather than a list of turns, so the roles have
-   * to be spelled out in the text for the model to tell them apart.
+   * to be spelled out in the text for the model to tell them apart. That makes the
+   * prompt look like a transcript, and a small model will happily carry on writing
+   * one — answering with `Me: ...` instead of answering at all. So the labels are
+   * first-person, the history is fenced off as background, and the last line is an
+   * instruction rather than another transcript line for it to continue.
    */
   private renderReplay(history: ConversationMessage[], transcript: string): string {
     if (history.length === 0) {
       return transcript
     }
-    const past = history
-      .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
-      .join('\n')
-    return `Here is our conversation so far:\n${past}\n\nUser: ${transcript}`
+    const past = history.map((m) => `${m.role === 'user' ? 'Me' : 'You'}: ${m.content}`).join('\n')
+    return [
+      'Background — what we have said so far:',
+      '---',
+      past,
+      '---',
+      `My new message is: ${transcript}`,
+      'Reply to my new message in your own words. Do not repeat the background or write "Me:" or "You:".',
+    ].join('\n')
   }
 }

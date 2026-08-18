@@ -250,7 +250,13 @@ class VoiceEngine {
     this.setState(this.isListening ? 'listening' : 'idle')
   }
 
-  /** Clear the node's conversation and set the system prompt. */
+  /**
+   * Clear the node's conversation and set the system prompt.
+   *
+   * Writing `instructions` makes the node abandon whatever it is generating, so
+   * settle the caller first — otherwise it waits out the full timeout for a reply
+   * that is never coming.
+   */
   resetConversation(instructions?: string): void {
     if (instructions !== undefined) {
       this.config.llmInstructions = instructions
@@ -258,6 +264,7 @@ class VoiceEngine {
     if (!this.engineId) {
       return
     }
+    this.cancelGeneration()
     this.ensureClient().setValue('llmNode', 'instructions', this.config.llmInstructions)
   }
 
