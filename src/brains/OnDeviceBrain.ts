@@ -8,6 +8,18 @@ import {
   type ConversationMessage,
 } from './types'
 
+/** How much of the transcript a replay resends, so it cannot outgrow the context. */
+const MAX_REPLAY_MESSAGES = 40
+
+/**
+ * The node's canned answer when a prompt cannot fit its context. It reads as an
+ * ordinary reply, but the node kept neither the message nor an answer, so the sync
+ * counter cannot see the divergence. Matching an SDK string is coupling; the events
+ * carry nothing else to key on.
+ */
+const INPUT_TOO_LONG_REPLY =
+  'That message is too long for me to process. Could you send a shorter one?'
+
 /**
  * Drop a transcript label the model wrote instead of just answering. Rare, but a
  * reply starting `Me:` must not be spoken aloud or stored as the assistant's turn,
@@ -18,17 +30,11 @@ function stripRoleLabel(text: string): string {
 }
 
 /**
- * Collapse a reply that arrived as verse or a list to its first sentence, read as
- * prose.
+ * Collapse a reply that arrived as verse or a list to its first line or sentence.
  *
- * Rule 1 of the prompt forbids both and rule 7 tells the model to decline the
- * requests that provoke them, but a direct "write me a poem" outranks the system
- * prompt on a model this size: in testing it answered with thirteen lines of verse,
- * twice, and the speaker read every one. Nothing legitimate is lost — a reply that
- * obeys the prompt is one or two sentences with no line breaks in it.
- *
- * A multi-line reply with no sentence end anywhere keeps its first line, which is
- * the shortest honest thing to say.
+ * The prompt forbids both, but a direct request outranks it at this model size and
+ * the speaker reads every line it is given. A reply that obeys the prompt has no
+ * line breaks, so nothing legitimate is lost.
  */
 function flattenMultilineReply(text: string): string {
   if (!text.includes('\n')) {
@@ -41,9 +47,9 @@ function flattenMultilineReply(text: string): string {
     return firstLine
   }
   const firstSentence = flattened.slice(0, firstEnd + 1)
-  // In verse a sentence runs over several lines, so the first one can still be a
-  // whole quatrain — which is what shipped the first time this guard ran on device.
-  // A sentence that outgrew its own line is not prose, so keep the line instead.
+  // In verse a sentence runs over several lines, so its first sentence can still be
+  // a whole quatrain. A sentence that outgrew its own line is not prose, so keep the
+  // line instead.
   return firstSentence.length > firstLine.length + 1 && !firstLine.match(SENTENCE_END)
     ? firstLine
     : firstSentence
@@ -53,12 +59,9 @@ function flattenMultilineReply(text: string): string {
 const SENTENCE_END = /[.!?…]["')\]]?$/
 
 /**
- * Drop a trailing fragment from a reply that was cut off rather than finished.
- *
- * The node's `maxTokens` ceiling stops wherever the count runs out, which is
- * usually mid-sentence — and half a sentence read aloud sounds like a fault
- * rather than a short answer. A reply with no sentence end at all is kept whole:
- * a fragment still beats saying nothing.
+ * Drop a trailing fragment from a reply that was cut off rather than finished —
+ * half a sentence read aloud sounds like a fault. A reply with no sentence end at
+ * all is kept whole.
  */
 function trimToCompleteSentence(text: string): string {
   const trimmed = text.trimEnd()
@@ -124,8 +127,10 @@ export class OnDeviceBrain implements Brain {
       reply.text
     )
 
-    // The node now holds every message up to and including the reply it made.
-    this.syncedMessages = history.length + 2
+    // The node holds every message up to and including its reply — unless it dropped
+    // the turn as too long, when it holds neither and the next turn rebuilds it.
+    const droppedTheTurn = reply.text.trim() === INPUT_TOO_LONG_REPLY
+    this.syncedMessages = droppedTheTurn ? 0 : history.length + 2
 
     return {
       text: trimToCompleteSentence(flattenMultilineReply(stripRoleLabel(reply.text))),
@@ -178,7 +183,10 @@ export class OnDeviceBrain implements Brain {
     if (history.length === 0) {
       return transcript
     }
-    const past = history.map((m) => `${m.role === 'user' ? 'Me' : 'You'}: ${m.content}`).join('\n')
+    const past = history
+      .slice(-MAX_REPLAY_MESSAGES)
+      .map((m) => `${m.role === 'user' ? 'Me' : 'You'}: ${m.content}`)
+      .join('\n')
     return [
       'Background — what we have said so far:',
       '---',

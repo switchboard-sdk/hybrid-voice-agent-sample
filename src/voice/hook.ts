@@ -10,6 +10,9 @@ export function useEdgeSpeech() {
   const transcriptCompleteCallback = useRef<((text: string) => void) | null>(null)
   const [voiceState, setVoiceState] = useState<VoiceState>('idle')
   const [error, setError] = useState<string | null>(null)
+  // Kept beside the message because that is what decides the wording and whether
+  // anything can be offered about it — see `describeError` in src/errors.ts.
+  const [errorCode, setErrorCode] = useState<string | null>(null)
   const [hasMicrophonePermission, setHasMicrophonePermission] = useState<boolean | null>(null)
   const interruptedCallback = useRef<(() => void) | null>(null)
 
@@ -31,8 +34,9 @@ export function useEdgeSpeech() {
       interruptedCallback.current?.()
     })
 
-    const errorSub = addListener('onError', ({ message }) => {
+    const errorSub = addListener('onError', ({ code, message }) => {
       setError(message)
+      setErrorCode(code)
     })
 
     return () => {
@@ -51,40 +55,62 @@ export function useEdgeSpeech() {
     interruptedCallback.current = cb
   }, [])
 
-  const wrappedListen = useCallback(async () => {
+  /** Drop the last error, so a dismissed banner stays dismissed. */
+  const clearError = useCallback(() => {
+    setError(null)
+    setErrorCode(null)
+  }, [])
+
+  /** Record a rejection from one of the calls below, keeping its code. */
+  const recordError = useCallback((e: unknown) => {
+    setError(e instanceof Error ? e.message : String(e))
+    setErrorCode((e as { code?: string })?.code ?? null)
+  }, [])
+
+  // Each of these reports whether the call worked, as well as recording the reason,
+  // so a caller can tell a failure apart from a success.
+  const wrappedListen = useCallback(async (): Promise<boolean> => {
     try {
       await listen()
+      return true
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      recordError(e)
+      return false
     }
-  }, [listen])
+  }, [listen, recordError])
 
-  const wrappedStopListening = useCallback(async () => {
+  const wrappedStopListening = useCallback(async (): Promise<boolean> => {
     try {
       await stopListening()
+      return true
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      recordError(e)
+      return false
     }
-  }, [stopListening])
+  }, [stopListening, recordError])
 
   const wrappedSpeak = useCallback(
-    async (text: string) => {
+    async (text: string): Promise<boolean> => {
       try {
         await speak(text)
+        return true
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        recordError(e)
+        return false
       }
     },
-    [speak]
+    [speak, recordError]
   )
 
-  const wrappedStopSpeaking = useCallback(async () => {
+  const wrappedStopSpeaking = useCallback(async (): Promise<boolean> => {
     try {
       await stopSpeaking()
+      return true
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      recordError(e)
+      return false
     }
-  }, [stopSpeaking])
+  }, [stopSpeaking, recordError])
 
   const wrappedRequestMicrophonePermission = useCallback(async () => {
     try {
@@ -92,11 +118,11 @@ export function useEdgeSpeech() {
       setHasMicrophonePermission(granted)
       return granted
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      recordError(e)
       setHasMicrophonePermission(false)
       return false
     }
-  }, [requestMicrophonePermission])
+  }, [requestMicrophonePermission, recordError])
 
   return {
     transcript,
@@ -104,6 +130,8 @@ export function useEdgeSpeech() {
     onInterrupted,
     voiceState,
     error,
+    errorCode,
+    clearError,
     hasMicrophonePermission,
     listen: wrappedListen,
     stopListening: wrappedStopListening,

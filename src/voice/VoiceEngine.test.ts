@@ -357,14 +357,15 @@ describe('on-device language model', () => {
     expect(findAction('cancel')).toBeUndefined()
   })
 
-  it('times out instead of wedging when the node never replies', async () => {
+  it('gives up in seconds when not even a first token arrives', async () => {
+    // Nothing distinguishes an abandoned turn from a slow one except silence.
     jest.useFakeTimers()
     voiceEngine.initialize('id', 'secret')
 
     const pending = voiceEngine.generate('hello')
     pending.catch(() => {})
-    jest.advanceTimersByTime(60_000)
-    await expect(pending).rejects.toThrow(/did not reply in time/i)
+    jest.advanceTimersByTime(8_000)
+    await expect(pending).rejects.toThrow(/produced nothing/i)
 
     jest.useRealTimers()
     const next = voiceEngine.generate('again')
@@ -376,5 +377,117 @@ describe('on-device language model', () => {
       })
     )
     await expect(next).resolves.toMatchObject({ text: 'ok' })
+  })
+
+  it('asks the node to cancel the turn it gave up on', () => {
+    jest.useFakeTimers()
+    voiceEngine.initialize('id', 'secret')
+
+    const pending = voiceEngine.generate('hello')
+    pending.catch(() => {})
+    jest.advanceTimersByTime(8_000)
+
+    expect(findAction('cancel')).toBeDefined()
+    jest.useRealTimers()
+  })
+
+  it('a first token buys the reply the full budget', async () => {
+    jest.useFakeTimers()
+    voiceEngine.initialize('id', 'secret')
+
+    const pending = voiceEngine.generate('write me something long')
+    pending.catch(() => {})
+    native.emit(
+      JSON.stringify({ objectURI: 'llmNode', name: 'tokenReceived', data: { text: 'The' } })
+    )
+
+    // Well past the first-token watchdog, nowhere near the full timeout.
+    jest.advanceTimersByTime(30_000)
+    native.emit(
+      JSON.stringify({
+        objectURI: 'llmNode',
+        name: 'responseReceived',
+        data: { text: 'a long reply', processingTime: 30_000 },
+      })
+    )
+
+    await expect(pending).resolves.toMatchObject({ text: 'a long reply' })
+    jest.useRealTimers()
+  })
+
+  it('still times out a generation that starts and never ends', async () => {
+    jest.useFakeTimers()
+    voiceEngine.initialize('id', 'secret')
+
+    const pending = voiceEngine.generate('hello')
+    pending.catch(() => {})
+    native.emit(
+      JSON.stringify({ objectURI: 'llmNode', name: 'tokenReceived', data: { text: 'The' } })
+    )
+    jest.advanceTimersByTime(60_000)
+
+    await expect(pending).rejects.toThrow(/did not reply in time/i)
+    jest.useRealTimers()
+  })
+
+  it('a reply that arrives after its caller gave up leaves the state machine alone', async () => {
+    // A later turn may be speaking by now, and putting it back to 'listening'
+    // would be a lie on screen.
+    jest.useFakeTimers()
+    voiceEngine.initialize('id', 'secret')
+    const pending = voiceEngine.generate('hello')
+    pending.catch(() => {})
+    jest.advanceTimersByTime(8_000)
+    await expect(pending).rejects.toThrow(/produced nothing/i)
+    jest.useRealTimers()
+
+    const states: string[] = []
+    voiceEngine.addListener('onStateChange', ({ state }) => states.push(state))
+    native.emit(
+      JSON.stringify({
+        objectURI: 'llmNode',
+        name: 'responseReceived',
+        data: { text: 'too late', processingTime: 1 },
+      })
+    )
+
+    expect(states).toEqual([])
+  })
+})
+
+describe('speech synthesis', () => {
+  it('gives up on a synthesis that never reports finishing', async () => {
+    jest.useFakeTimers()
+    voiceEngine.initialize('id', 'secret')
+    await voiceEngine.listen()
+
+    const errors: string[] = []
+    voiceEngine.addListener('onError', ({ code }) => errors.push(code))
+    const states: string[] = []
+    voiceEngine.addListener('onStateChange', ({ state }) => states.push(state))
+
+    await voiceEngine.speak('hello')
+    jest.advanceTimersByTime(30_000)
+
+    expect(errors).toContain('TTS_TIMEOUT')
+    // Not stuck in 'speaking', where the next utterance reads as barge-in.
+    expect(states[states.length - 1]).toBe('listening')
+    jest.useRealTimers()
+  })
+
+  it('does not fire once the synthesis has finished', async () => {
+    jest.useFakeTimers()
+    voiceEngine.initialize('id', 'secret')
+    await voiceEngine.listen()
+
+    const errors: string[] = []
+    voiceEngine.addListener('onError', ({ code }) => errors.push(code))
+
+    await voiceEngine.speak('hello')
+    native.emit(JSON.stringify({ objectURI: 'ttsNode', name: 'finished' }))
+    jest.advanceTimersByTime(30_000)
+
+    expect(errors).toEqual([])
+    jest.useRealTimers()
   })
 })

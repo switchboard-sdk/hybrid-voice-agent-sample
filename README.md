@@ -10,9 +10,8 @@ Built with the [Switchboard SDK](https://switchboard.audio). The on-device voice
 pipeline comes from [EdgeSpeech](https://github.com/switchboard-sdk/EdgeSpeech).
 
 > **Status: early.** The on-device speech pipeline runs, both brains sit behind one
-> interface, and you can switch between them mid-conversation. The screen is the
-> travel-agent demo, on a deliberately minimal persona prompt that is not tuned yet.
-> The model is bundled rather than downloaded on first launch.
+> interface, and you can switch between them mid-conversation. The model is bundled
+> rather than downloaded on first launch.
 
 ## Requirements
 
@@ -90,38 +89,34 @@ pipeline never means touching native code.
 One screen, and one control: **Talk** opens the mic and every reply comes back
 spoken. The transcript is the whole surface.
 
-Each assistant turn carries the brain that answered it and the time that brain
-took — `AI · On-device · 1.2 s` — coloured per brain, so switching mid-conversation
-shows the difference rather than claiming it. The number is the brain's own
-measurement so the two paths compare like for like; the round trip, which adds
-only app overhead, goes to the console alongside it as `[turn]`. That plus the
-`[LLM]` and `[Cloud]` lines each brain logs is the whole of the telemetry — there
-is no analytics dependency.
+Each assistant turn carries the brain that answered it and the time that brain took
+— `AI · On-device · 1.2 s` — coloured per brain, so switching mid-conversation shows
+the difference rather than claiming it. The number is the brain's own measurement so
+the two paths compare like for like; the round trip goes to the console as `[turn]`.
+That plus the `[LLM]` and `[Cloud]` lines each brain logs is the whole of the
+telemetry — there is no analytics dependency.
 
 The voice is never presented as a person: the header says so, and every reply is
 labelled `AI`.
 
 Badges, timings and interrupt markers are held alongside the transcript by index
-rather than in it. Both brains read that transcript, and neither ever produced a
-message about itself.
+rather than in it: both brains read that transcript, and neither produced a message
+about itself.
 
 ## The persona
 
 Both brains are given the same system prompt, `DEFAULT_SYSTEM_PROMPT` in
 `src/brains/types.ts`, so a turn reads the same whichever one served it. It is
-written for the smaller of the two, because what the 1B on-device model can follow
-a cloud model can follow as well: numbered one-line rules rather than a paragraph,
-and **every rule phrased as something to do**.
+written for the smaller of the two, because what the 1B on-device model can follow a
+cloud model can follow as well: numbered one-line rules rather than a paragraph, and
+**every rule phrased as something to do**.
 
-That last part is the whole lesson of tuning it. A draft that stated the situation —
-"you have no internet, no booking system and no live data" — got a quoted taxi fare,
-a weather report produced in airplane mode, and an invented hospital, while the same
-draft's length rule, an instruction, held on every turn. A small model acts on
-actions and ignores descriptions. The rules that follow from that: refusing and
-redirecting are one sentence rather than two rules, the ban on invented specifics is
-general rather than a list of examples to slip between, and nothing may describe a
-named place — the worst answer of that pass asserted what the harbour office has on
-staff, and "the harbour office" came from the prompt's own list of who to ask.
+That last part matters more than it sounds. A rule that states the situation — "you
+have no internet, no booking system and no live data" — buys nothing at this size; a
+model acts on instructions and ignores descriptions. Hence refusing and redirecting
+in one sentence rather than two rules, a general ban on invented specifics rather
+than a list of examples to slip between, and no describing a named place, since the
+prompt's own examples of who to ask are otherwise nouns to invent facts about.
 
 Length is prompt-only on the on-device path. `CloudBrain` caps a reply at 200
 tokens; the `LlamaCpp.LLM` node takes `instructions`, `temperature`, `contextSize`
@@ -131,22 +126,18 @@ hold if the sampling is conservative enough to follow them.
 
 ### What the prompt does not fix
 
-Three device passes got fabrication to zero, and left two habits behind.
+Two habits survive it.
 
-The model sometimes **recites a rule instead of following it**: asked how long a
-rebooking takes, it answered "I can only help with travel" — rule 7's sentence,
-aimed at a travel question. Asked what is worth seeing, it announced that it can
-offer general guidance rather than offering any. Both are honest and useless. The
-wording that produced them is also what stopped the invented fares and clinics, so
-it stays until something better is measured rather than guessed.
+The model sometimes **recites a rule instead of following it** — answering "I can
+only help with travel" to a travel question it cannot answer, or announcing that it
+can offer general guidance rather than offering any. Honest and useless. The same
+wording is what stops invented fares and clinics, so it stays.
 
-And a direct **"write me a poem" still produces verse**, three times out of three,
-whatever the prompt says. A request in the user's turn outranks a rule in the system
-prompt on a model this size. That is why the guard in `OnDeviceBrain` exists: the
-prompt asks, the code decides.
+And a direct **"write me a poem" produces verse** whatever the prompt says: a
+request in the user's turn outranks a rule in the system prompt at this size. Hence
+the guard in `OnDeviceBrain` — the prompt asks, the code decides.
 
-Neither applies to the cloud brain, which follows the same prompt without either
-habit.
+Neither habit appears on the cloud brain with the same prompt.
 
 ## The two brains
 
@@ -178,11 +169,10 @@ carry on writing one rather than answering. So the replay fences the history off
 background and ends on an instruction, and a reply that still opens with a role
 label has it stripped before it reaches the transcript or the speaker.
 
-It also flattens a reply that arrives as verse or a list to its first sentence.
-The prompt forbids both, and tells the model to decline the requests that provoke
-them, but a direct "write me a poem" outranks the system prompt on a model this
-size — it answered with thirteen lines twice, and the speaker read every one. A
-reply that obeys the prompt has no line breaks in it, so nothing legitimate is lost.
+It also flattens a reply that arrives as verse or a list to its first line or
+sentence. The prompt forbids both, but a direct request outranks it at this model
+size and the speaker reads every line it is given; a reply that obeys the prompt has
+no line breaks, so nothing legitimate is lost.
 
 It also drops a trailing half-sentence. A reply can be cut off rather than finished
 — the node's `maxTokens` ceiling stops wherever the count runs out — and half a
@@ -252,6 +242,35 @@ For those, put a proxy you control between the app and the provider, keep the ke
 server-side, and point `EXPO_PUBLIC_CLOUD_LLM_BASE_URL` at the proxy. Nothing in
 the app changes: it already sends the same chat-completions request, and the key it
 sends is then whatever the proxy expects rather than the real one.
+
+## When things fail
+
+Every failure lands in one place: a banner under the header, with an action where
+one exists — Settings for a microphone the user has denied, the other brain when
+the selected one cannot answer. `src/errors.ts` is the only file that turns an
+error code into a sentence, so a new failure has one obvious home, and an
+unrecognised code keeps its own message rather than being flattened into an
+apology.
+
+Two of the six cases needed more than wording.
+
+**A turn the model never answers.** The `LlamaCpp.LLM` node abandons a turn in
+silence in several cases — no model loaded, or a prompt it could not measure,
+template, tokenise or decode — and has no error event it could send even in
+principle, while the `prompt` action returns success either way. Nothing
+distinguishes a dead model from a slow one but silence, so `VoiceEngine` watches for
+the first streamed token: it arrives within seconds when the model is running, and
+its absence ends the turn early. The full reply keeps the longer budget, so a slow
+generation is unaffected.
+
+**Synthesis that never finishes.** `speak()` has no other bound, and a `finished`
+event that never arrives would leave the state machine in `speaking` for the rest of
+the session — after which the next thing the user says is read as barge-in and
+stamps the previous turn `interrupted`. There is a watchdog on that too.
+
+Missing credentials get a screen of their own. The provider throws when the app ID
+or secret is absent, which is a fair contract guard but nothing here catches a
+render throw, so `App.tsx` checks first and shows what to set.
 
 ## Conversation history
 
