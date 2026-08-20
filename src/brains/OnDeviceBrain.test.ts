@@ -79,6 +79,95 @@ describe('reply', () => {
     }
   )
 
+  it('speaks only the first sentence of a reply that came back as verse', async () => {
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({
+      text: [
+        'The sea, a vast and mysterious shore,',
+        'Where waves crash strong and the tide does roar.',
+        '',
+        'The sun sets low, a fiery glow,',
+        'Painting the horizon with colors slow.',
+      ].join('\n'),
+      processingTime: 1,
+    })
+
+    const reply = await brain.reply('write me a poem about the sea', [])
+
+    // A sentence of verse runs over several lines, so the line is the honest bound.
+    expect(reply.text).toBe('The sea, a vast and mysterious shore,')
+  })
+
+  it('collapses a list to its first sentence', async () => {
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({
+      text: 'Three things are worth seeing.\n- The harbour\n- The market\n- The old fort',
+      processingTime: 1,
+    })
+
+    const reply = await brain.reply('hello', [])
+
+    expect(reply.text).toBe('Three things are worth seeing.')
+  })
+
+  it('keeps the first line when a multi-line reply never ends a sentence', async () => {
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({
+      text: 'Harbour, market, fort\nand the coast road',
+      processingTime: 1,
+    })
+
+    const reply = await brain.reply('hello', [])
+
+    expect(reply.text).toBe('Harbour, market, fort')
+  })
+
+  it('leaves a one-or-two-sentence reply untouched', async () => {
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({
+      text: "I can't check fares while offline, but the taxi rank will quote you. Ask before you set off.",
+      processingTime: 1,
+    })
+
+    const reply = await brain.reply('hello', [])
+
+    expect(reply.text).toBe(
+      "I can't check fares while offline, but the taxi rank will quote you. Ask before you set off."
+    )
+  })
+
+  it('drops a sentence the reply was cut off mid-way through', async () => {
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({
+      text: 'Ferries leave in the early afternoon. Check the harbour board because the times can',
+      processingTime: 1,
+    })
+
+    const reply = await brain.reply('hello', [])
+
+    expect(reply.text).toBe('Ferries leave in the early afternoon.')
+  })
+
+  it.each([
+    'Take the coastal road east.',
+    'Which harbour do you mean?',
+    'Ask at the airline desk!',
+    'She said "take the ferry."',
+  ])('leaves a reply that finished its sentence alone (%s)', async (raw) => {
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({ text: raw, processingTime: 1 })
+
+    const reply = await brain.reply('hello', [])
+
+    expect(reply.text).toBe(raw)
+  })
+
+  it('keeps a cut-off reply that never reached a sentence end', async () => {
+    // A fragment still beats saying nothing.
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({
+      text: 'The ferry to Bequia usually leaves',
+      processingTime: 1,
+    })
+
+    const reply = await brain.reply('hello', [])
+
+    expect(reply.text).toBe('The ferry to Bequia usually leaves')
+  })
+
   it('leaves a reply that merely contains a colon alone', async () => {
     jest.mocked(voiceEngine.generate).mockResolvedValueOnce({
       text: 'Vienna has three: palaces, cafes, music.',

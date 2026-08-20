@@ -51,6 +51,20 @@ interface VoiceEngineConfig {
   llmModelPath: string
   llmContextSize: number
   llmTemperature: number
+  /**
+   * Ceiling on one reply, in tokens. 0 leaves the reply bounded only by the model
+   * stopping on its own — which is what the node does without the setting, so it
+   * is only sent when set. Needs an SDK build carrying SWI-6826; an older node
+   * logs it as an unknown config key.
+   */
+  llmMaxTokens: number
+  /**
+   * Fixed sampling seed, so the same prompt comes back with the same reply. `null`
+   * leaves the node on a random seed, which is what a demo wants. Worth setting
+   * while tuning the prompt: it makes the wording the only thing that changed
+   * between two runs.
+   */
+  llmSeed: number | null
   llmInstructions: string
 }
 
@@ -80,6 +94,8 @@ class VoiceEngine {
     llmModelPath: DEFAULT_LLM_MODEL,
     llmContextSize: 4096,
     llmTemperature: 0.8,
+    llmMaxTokens: 0,
+    llmSeed: null,
     llmInstructions: '',
   }
 
@@ -168,6 +184,12 @@ class VoiceEngine {
     }
     if (typeof config.llmTemperature === 'number') {
       this.config.llmTemperature = config.llmTemperature
+    }
+    if (typeof config.llmMaxTokens === 'number') {
+      this.config.llmMaxTokens = config.llmMaxTokens
+    }
+    if (typeof config.llmSeed === 'number') {
+      this.config.llmSeed = config.llmSeed
     }
     if (typeof config.llmInstructions === 'string') {
       this.config.llmInstructions = config.llmInstructions
@@ -445,6 +467,8 @@ class VoiceEngine {
                 initializeModel: true,
                 contextSize: this.config.llmContextSize,
                 temperature: this.config.llmTemperature,
+                ...(this.config.llmMaxTokens > 0 && { maxTokens: this.config.llmMaxTokens }),
+                ...(this.config.llmSeed !== null && { seed: this.config.llmSeed }),
                 ...(this.config.llmModelPath && { modelPath: this.config.llmModelPath }),
                 ...(this.config.llmInstructions && { prompt: this.config.llmInstructions }),
               },
@@ -601,6 +625,8 @@ class VoiceEngine {
       llmModelPath: DEFAULT_LLM_MODEL,
       llmContextSize: 4096,
       llmTemperature: 0.8,
+      llmMaxTokens: 0,
+      llmSeed: null,
       llmInstructions: '',
     }
   }

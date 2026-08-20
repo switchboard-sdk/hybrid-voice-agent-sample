@@ -105,6 +105,49 @@ Badges, timings and interrupt markers are held alongside the transcript by index
 rather than in it. Both brains read that transcript, and neither ever produced a
 message about itself.
 
+## The persona
+
+Both brains are given the same system prompt, `DEFAULT_SYSTEM_PROMPT` in
+`src/brains/types.ts`, so a turn reads the same whichever one served it. It is
+written for the smaller of the two, because what the 1B on-device model can follow
+a cloud model can follow as well: numbered one-line rules rather than a paragraph,
+and **every rule phrased as something to do**.
+
+That last part is the whole lesson of tuning it. A draft that stated the situation —
+"you have no internet, no booking system and no live data" — got a quoted taxi fare,
+a weather report produced in airplane mode, and an invented hospital, while the same
+draft's length rule, an instruction, held on every turn. A small model acts on
+actions and ignores descriptions. The rules that follow from that: refusing and
+redirecting are one sentence rather than two rules, the ban on invented specifics is
+general rather than a list of examples to slip between, and nothing may describe a
+named place — the worst answer of that pass asserted what the harbour office has on
+staff, and "the harbour office" came from the prompt's own list of who to ask.
+
+Length is prompt-only on the on-device path. `CloudBrain` caps a reply at 200
+tokens; the `LlamaCpp.LLM` node takes `instructions`, `temperature`, `contextSize`
+and `seed` and has no equivalent, so the wording is what keeps a reply speakable.
+The temperature is also lower than the pipeline's default, in `App.tsx`: rules only
+hold if the sampling is conservative enough to follow them.
+
+### What the prompt does not fix
+
+Three device passes got fabrication to zero, and left two habits behind.
+
+The model sometimes **recites a rule instead of following it**: asked how long a
+rebooking takes, it answered "I can only help with travel" — rule 7's sentence,
+aimed at a travel question. Asked what is worth seeing, it announced that it can
+offer general guidance rather than offering any. Both are honest and useless. The
+wording that produced them is also what stopped the invented fares and clinics, so
+it stays until something better is measured rather than guessed.
+
+And a direct **"write me a poem" still produces verse**, three times out of three,
+whatever the prompt says. A request in the user's turn outranks a rule in the system
+prompt on a model this size. That is why the guard in `OnDeviceBrain` exists: the
+prompt asks, the code decides.
+
+Neither applies to the cloud brain, which follows the same prompt without either
+habit.
+
 ## The two brains
 
 Speech recognition and synthesis are always on the device. The only thing that
@@ -134,6 +177,17 @@ out in the prompt text — which makes it look like a transcript, and a 1B model
 carry on writing one rather than answering. So the replay fences the history off as
 background and ends on an instruction, and a reply that still opens with a role
 label has it stripped before it reaches the transcript or the speaker.
+
+It also flattens a reply that arrives as verse or a list to its first sentence.
+The prompt forbids both, and tells the model to decline the requests that provoke
+them, but a direct "write me a poem" outranks the system prompt on a model this
+size — it answered with thirteen lines twice, and the speaker read every one. A
+reply that obeys the prompt has no line breaks in it, so nothing legitimate is lost.
+
+It also drops a trailing half-sentence. A reply can be cut off rather than finished
+— the node's `maxTokens` ceiling stops wherever the count runs out — and half a
+sentence read aloud sounds like a fault rather than a short answer. A reply that
+never reached a sentence end is kept whole: a fragment still beats saying nothing.
 
 `CloudBrain` calls OpenAI's chat completions API, which takes the transcript as it
 is — the roles the app already tracks are the roles the model expects. On top of
