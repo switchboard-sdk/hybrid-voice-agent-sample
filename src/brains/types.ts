@@ -51,42 +51,14 @@ export interface Brain {
 }
 
 /**
- * The persona both brains share, so a turn reads the same whichever one served
- * it. Tuned for the smaller of the two: what the 1B on-device model can follow,
- * a cloud model can follow as well.
+ * The persona both brains share, tuned for the smaller of the two and sent as a
+ * system message on both paths.
  *
- * Every line is an instruction, because two ten-question passes on device showed
- * that is the only kind the 1B obeys. A first draft described the situation — "you
- * have no internet, no booking system and no live data" — and the model quoted a
- * taxi fare and reported tomorrow's weather from airplane mode, while the same
- * draft's length rule, an instruction, held on all twenty turns.
- *
- * What each rule is paying for, in the order it was learnt:
- *
- * - **Refusing and redirecting are one sentence, not two rules.** Split across
- *   rules, the model refused and never redirected, four times out of four.
- * - **Rule 3 names the hedges** — "around", "about", "a few" — because banning
- *   invented specifics only taught it to estimate them: "around R200", "a few
- *   days", "a bit of a hike". The letter was kept and the point was lost.
- * - **Rule 4 exists because dropping "no booking system" cost a working refusal.**
- *   Booking is not a lookup, so a rule about looking things up does not cover it,
- *   and the model offered to make a reservation and be phoned back.
- * - **Rule 5 forbids assuming where the traveller is.** One hedged fare in rand
- *   became a Cape Town frame three turns later, then a named clinic "a short taxi
- *   ride from the harbour". Fabrications compound: both brains read this
- *   transcript, so one invented detail furnishes the next answer.
- * - **Rule 7 dictates the sentence rather than the behaviour.** Naming the form —
- *   "a poem" — did not stop it writing thirteen lines of verse, twice. A direct
- *   instruction in the user's turn outranks a rule in the system prompt on a model
- *   this size, so this one may still lose; the reliable fix for that is code, not
- *   wording.
- *
- * The example sits under the rule it demonstrates rather than at the end, and
- * spells no role labels: the model copies anything that looks like a transcript
- * label straight into its reply.
- *
- * It reaches the model as a system message on both paths — the node applies the
- * chat template itself, and `CloudBrain` sends it as `role: 'system'`.
+ * Every line is an instruction: at this model size a rule that only describes the
+ * situation buys nothing. Refusal and redirect have to be one sentence, the
+ * no-figures rule has to name the hedge words, and actions need their own rule
+ * because one about lookups does not cover them. Rule 7 can still lose to a direct
+ * request in the user's turn; `flattenMultilineReply` in `OnDeviceBrain` cannot.
  */
 export const DEFAULT_SYSTEM_PROMPT = [
   'You are the voice of a travel assistant app. The traveller speaks to you and hears your reply read aloud.',

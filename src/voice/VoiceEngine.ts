@@ -43,6 +43,21 @@ const DEFAULT_LLM_MODEL = ''
 
 const GENERATE_TIMEOUT_MS = 60_000
 
+/**
+ * How long to wait for the model's first token. The node abandons a turn silently —
+ * no model loaded, or a prompt it could not measure, template, tokenise or decode —
+ * and has no error event to send, so a first token is the only proof it is running.
+ * Once one arrives the reply keeps the full budget above.
+ */
+const FIRST_TOKEN_TIMEOUT_MS = 8_000
+
+/**
+ * How long a synthesised reply may take before the engine is assumed stuck. Without
+ * it, a `finished` event that never arrives leaves the state machine in 'speaking'
+ * and the next utterance is read as barge-in. A backstop, not a deadline.
+ */
+const SPEAK_TIMEOUT_MS = 30_000
+
 interface VoiceEngineConfig {
   vadSensitivity: number
   sampleRate: number
@@ -52,17 +67,13 @@ interface VoiceEngineConfig {
   llmContextSize: number
   llmTemperature: number
   /**
-   * Ceiling on one reply, in tokens. 0 leaves the reply bounded only by the model
-   * stopping on its own — which is what the node does without the setting, so it
-   * is only sent when set. Needs an SDK build carrying SWI-6826; an older node
-   * logs it as an unknown config key.
+   * Ceiling on one reply, in tokens. 0 means unlimited and is not sent, since a node
+   * without the setting logs it as an unknown config key.
    */
   llmMaxTokens: number
   /**
    * Fixed sampling seed, so the same prompt comes back with the same reply. `null`
-   * leaves the node on a random seed, which is what a demo wants. Worth setting
-   * while tuning the prompt: it makes the wording the only thing that changed
-   * between two runs.
+   * leaves it random, which is what a demo wants; set it to compare two prompts.
    */
   llmSeed: number | null
   llmInstructions: string
@@ -106,7 +117,11 @@ class VoiceEngine {
     resolve: (reply: LLMReply) => void
     reject: (error: Error) => void
     timer: ReturnType<typeof setTimeout>
+    firstTokenTimer: ReturnType<typeof setTimeout> | null
   } | null = null
+
+  /** Backstop for a synthesis that never reports finishing. */
+  private speakTimer: ReturnType<typeof setTimeout> | null = null
 
   // MARK: - Public listener API (mirrors the old Expo NativeModule.addListener)
 
@@ -225,7 +240,19 @@ class VoiceEngine {
         reject(this.makeError('GENERATE_TIMEOUT', 'The on-device model did not reply in time'))
       }, GENERATE_TIMEOUT_MS)
 
-      this.pendingGeneration = { resolve, reject, timer }
+      // Cancel on the way out, so a late reply cannot land on an abandoned turn.
+      const firstTokenTimer = setTimeout(() => {
+        this.settleGeneration()
+        this.ensureClient().callAction('llmNode', 'cancel', {})
+        reject(
+          this.makeError(
+            'MODEL_NOT_RESPONDING',
+            'The on-device model produced nothing. It may have failed to load.'
+          )
+        )
+      }, FIRST_TOKEN_TIMEOUT_MS)
+
+      this.pendingGeneration = { resolve, reject, timer, firstTokenTimer }
 
       const res = this.ensureClient().callAction('llmNode', 'prompt', { text })
       if (res.error) {
@@ -265,11 +292,50 @@ class VoiceEngine {
 
   /** Clear the in-flight generation and return to a resting state. */
   private settleGeneration(): void {
-    if (this.pendingGeneration) {
-      clearTimeout(this.pendingGeneration.timer)
-      this.pendingGeneration = null
+    const pending = this.pendingGeneration
+    if (!pending) {
+      // A reply that arrived after its caller gave up. Leave the state machine
+      // alone: a later turn may be speaking by now, and putting it back to
+      // 'listening' would be false on screen.
+      return
     }
+    clearTimeout(pending.timer)
+    if (pending.firstTokenTimer) {
+      clearTimeout(pending.firstTokenTimer)
+    }
+    this.pendingGeneration = null
     this.setState(this.isListening ? 'listening' : 'idle')
+  }
+
+  /** Called on the first token: only the full-reply budget applies from here. */
+  private clearFirstTokenTimer(): void {
+    const pending = this.pendingGeneration
+    if (!pending?.firstTokenTimer) {
+      return
+    }
+    clearTimeout(pending.firstTokenTimer)
+    pending.firstTokenTimer = null
+  }
+
+  /** Start the backstop for a synthesis that never reports finishing. */
+  private armSpeakWatchdog(): void {
+    this.clearSpeakWatchdog()
+    this.speakTimer = setTimeout(() => {
+      this.speakTimer = null
+      if (!this.isSpeaking) {
+        return
+      }
+      this.isSpeaking = false
+      this.setState(this.isListening ? 'listening' : 'idle')
+      this.emitError('TTS_TIMEOUT', 'The synthesised reply never finished playing')
+    }, SPEAK_TIMEOUT_MS)
+  }
+
+  private clearSpeakWatchdog(): void {
+    if (this.speakTimer) {
+      clearTimeout(this.speakTimer)
+      this.speakTimer = null
+    }
   }
 
   /**
@@ -354,6 +420,7 @@ class VoiceEngine {
       throw this.makeError('SPEAK_FAILED', res.error.message)
     }
     this.isSpeaking = true
+    this.armSpeakWatchdog()
     this.setState('speaking')
   }
 
@@ -364,6 +431,7 @@ class VoiceEngine {
     // Clear isSpeaking before stopping so the 'finished' handler (which guards on
     // isSpeaking) does not fire onTTSComplete after an explicit cancellation.
     this.isSpeaking = false
+    this.clearSpeakWatchdog()
     this.ensureClient().callAction('ttsNode', 'stop', {})
     this.setState(this.isListening ? 'listening' : 'idle')
   }
@@ -533,6 +601,7 @@ class VoiceEngine {
         // a decoded transcript (not raw VAD) avoids false triggers from TTS
         // audio bleed-through.
         this.isSpeaking = false
+        this.clearSpeakWatchdog()
         this.ensureClient().callAction('ttsNode', 'stop', {})
         this.setState('listening')
         this.emit('onInterrupted', undefined)
@@ -547,6 +616,7 @@ class VoiceEngine {
         return
       }
       this.isSpeaking = false
+      this.clearSpeakWatchdog()
       this.setState('listening')
       this.emit('onTTSComplete', undefined)
     } else if (node === 'llmNode' && name === 'generationCancelled') {
@@ -554,6 +624,11 @@ class VoiceEngine {
       // Deliberately does not touch pendingGeneration: cancelGeneration() already
       // settled that, and a new generation may have started since.
       this.emit('onGenerationCancelled', undefined)
+    } else if (node === 'llmNode' && name === 'tokenReceived') {
+      // Liveness only — the reply is spoken whole rather than streamed. The first
+      // token is what tells a slow model apart from one that took the turn and
+      // dropped it, which the node cannot report any other way.
+      this.clearFirstTokenTimer()
     } else if (node === 'llmNode' && name === 'responseReceived') {
       const text = (this.extractText(e) ?? '').trim()
       const processingTime = Number(e?.data?.processingTime ?? 0)
@@ -562,8 +637,8 @@ class VoiceEngine {
       pending?.resolve({ text, processingTime })
       this.emit('onLLMResponse', { text, processingTime })
     }
-    // ttsNode 'synthesisStarted' and llmNode 'tokenReceived' are ignored — we
-    // wait for the full reply before speaking it.
+    // ttsNode 'synthesisStarted' is ignored, and llmNode 'tokenReceived' is read
+    // for liveness only — we wait for the full reply before speaking it.
   }
 
   private extractText(e: any): string | null {
@@ -616,6 +691,7 @@ class VoiceEngine {
     this.isListening = false
     this.isSpeaking = false
     this.eventsWired = false
+    this.clearSpeakWatchdog()
     this.pendingGeneration = null
     this.config = {
       vadSensitivity: 0.5,

@@ -93,7 +93,7 @@ describe('reply', () => {
 
     const reply = await brain.reply('write me a poem about the sea', [])
 
-    // A sentence of verse runs over several lines, so the line is the honest bound.
+    // A sentence of verse runs over several lines, so the line is the bound.
     expect(reply.text).toBe('The sea, a vast and mysterious shore,')
   })
 
@@ -177,6 +177,36 @@ describe('reply', () => {
     const reply = await brain.reply('hello', [])
 
     expect(reply.text).toBe('Vienna has three: palaces, cafes, music.')
+  })
+
+  it('forces a replay after the node drops a turn as too long', async () => {
+    // The node kept neither the message nor an answer, so trusting the counter would
+    // leave the model answering as though the last exchange never happened.
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({
+      text: 'That message is too long for me to process. Could you send a shorter one?',
+      processingTime: 1,
+    })
+    await brain.reply('a very long message', [])
+    jest.clearAllMocks()
+
+    await brain.reply('next', [user('a very long message'), assistant('too long')])
+
+    expect(voiceEngine.resetConversation).toHaveBeenCalled()
+    expect(jest.mocked(voiceEngine.generate).mock.calls[0][0]).toContain('Background')
+  })
+
+  it('caps how much of the transcript a replay resends', async () => {
+    // An uncapped replay eventually cannot fit the context.
+    const history = Array.from({ length: 60 }, (_, i) =>
+      i % 2 === 0 ? user(`question ${i}`) : assistant(`answer ${i}`)
+    )
+
+    await brain.reply('and now?', history)
+
+    const prompt = jest.mocked(voiceEngine.generate).mock.calls[0][0]
+    expect(prompt).not.toContain('question 0')
+    expect(prompt).toContain('question 58')
+    expect(prompt).toContain('and now?')
   })
 
   it('is back in sync after a replay, so the next turn is incremental', async () => {

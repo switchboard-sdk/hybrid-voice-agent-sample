@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
 import {
-  Alert,
+  Linking,
   ScrollView,
   StatusBar,
   StyleSheet,
@@ -11,10 +11,8 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context'
 
 import { brains, route, type BrainId, type ConversationMessage } from '../brains'
+import { describeError, isCancelled, type ErrorDescription } from '../errors'
 import { useEdgeSpeech, type VoiceState } from '../voice'
-
-/** A turn that was abandoned rather than failing. */
-const isCancelled = (error: unknown): boolean => (error as { code?: string })?.code === 'CANCELLED'
 
 /** What the transcript itself does not carry: who answered, and how long it took. */
 interface TurnMeta {
@@ -46,10 +44,7 @@ const BRAIN_COLOR: Record<BrainId, string> = {
   cloud: '#1565c0',
 }
 
-/**
- * The engine's `processing` state is only reached by the on-device path, and a
- * cloud turn is just as much thinking — so the two are folded together here.
- */
+/** Only the on-device path reaches `processing`, and a cloud turn is thinking too. */
 function activityOf(voiceState: VoiceState, thinking: boolean): Activity {
   if (thinking || voiceState === 'processing') {
     return 'thinking'
@@ -80,11 +75,9 @@ const EXAMPLE_PROMPTS = [
 /**
  * The demo screen: a travel agent you talk to.
  *
- * Every assistant turn is stamped with the brain that answered and the time it
- * took, so switching mid-conversation shows the difference rather than describing
- * it. The transcript stays what was actually said — the badges, the timings and
- * the interrupt markers are annotations held alongside it by index, because both
- * brains read that transcript and neither ever produced a message about itself.
+ * The transcript holds only what was said. Badges, timings and interrupt markers
+ * are annotations kept alongside it by index, since both brains read the transcript
+ * and neither produced a message about itself.
  */
 export function ConversationScreen(): React.JSX.Element {
   const {
@@ -92,6 +85,9 @@ export function ConversationScreen(): React.JSX.Element {
     onTranscriptComplete,
     onInterrupted,
     voiceState,
+    error,
+    errorCode,
+    clearError,
     listen,
     stopListening,
     speak,
@@ -99,30 +95,34 @@ export function ConversationScreen(): React.JSX.Element {
     requestMicrophonePermission,
   } = useEdgeSpeech()
 
-  // The mic is live and replies are automatic. One control rather than two: a
-  // conversation you have to arm separately is not the demo.
+  // The mic is live and replies are automatic — one control, not two.
   const [sessionActive, setSessionActive] = useState(false)
   const [preferred, setPreferred] = useState<BrainId>('on-device')
   const [conversationHistory, setConversationHistory] = useState<ConversationMessage[]>([])
   // Tracked here rather than read off voiceState: only the on-device brain drives
-  // the engine's 'processing' state, and the indicator has to mean the same thing
-  // for both.
+  // 'processing', and the indicator has to mean the same thing for both.
   const [thinking, setThinking] = useState(false)
-  // Which replies were cut off mid-sentence. An interruption annotates a turn, it
-  // is not a turn of its own — and it has to stay out of the transcript, because
-  // both brains read that and neither ever generated a message saying so.
+  // Which replies were cut off mid-sentence. An interruption annotates a turn
+  // rather than being one, so it stays out of the transcript both brains read.
   const [interrupted, setInterrupted] = useState<ReadonlySet<number>>(new Set())
   // Who answered each assistant turn, and how long the user waited for it.
   const [turnMeta, setTurnMeta] = useState<ReadonlyMap<number, TurnMeta>>(new Map())
+  // Whatever last went wrong, and what can be offered about it.
+  const [failure, setFailure] = useState<ErrorDescription | null>(null)
+  // Seconds the current turn has been thinking. The cloud path can spend two
+  // timeouts and a retry on one turn, which needs to be legible while it happens.
+  const [thinkingSeconds, setThinkingSeconds] = useState(0)
 
   const brain = route(preferred)
+  // What the banner offers when a brain fails: no connection is when the on-device
+  // path earns its place, and a model that will not load is when the cloud does.
+  const otherBrain = brains.find((candidate) => candidate.id !== preferred) ?? brain
   const activity = activityOf(voiceState, thinking)
   const chatScrollRef = useRef<ScrollView>(null)
   const prevVoiceStateRef = useRef(voiceState)
 
-  // The transcript the brain is handed. Mirrors conversationHistory so a turn
-  // that starts before React has re-rendered still sees every earlier message —
-  // which now happens routinely, because a turn can be interrupted by the next.
+  // The transcript the brain is handed. Mirrors conversationHistory so a turn that
+  // starts before React re-renders still sees every prior message.
   const historyRef = useRef<ConversationMessage[]>([])
 
   // The turn in flight, so a new one can abandon it.
@@ -138,8 +138,8 @@ export function ConversationScreen(): React.JSX.Element {
 
   const handleConversationResponse = useCallback(
     async (userText: string, history: ConversationMessage[]) => {
-      // The mic stays live while the brain thinks, so the user can talk over the
-      // pause. Doing so lands here again and abandons the turn below.
+      // The mic stays live while the brain thinks, so talking over the pause lands
+      // here again and abandons the turn below.
       turnRef.current?.abort()
       const turn = new AbortController()
       turnRef.current = turn
@@ -148,6 +148,8 @@ export function ConversationScreen(): React.JSX.Element {
       const startedAt = Date.now()
       try {
         const reply = await brain.reply(userText, history, turn.signal)
+        setFailure(null)
+        clearError()
         const waited = Date.now() - startedAt
         setThinking(false)
         const index = appendMessage({ role: 'assistant', content: reply.text })
@@ -158,35 +160,34 @@ export function ConversationScreen(): React.JSX.Element {
             ms: reply.processingTime,
           })
         )
-        // The number on screen is the brain's own, so the two paths compare
-        // like for like. The round trip is logged next to it.
+        // The screen shows the brain's own number, so the paths compare like for like.
         console.log(
           `[turn] ${brain.label} answered in ${reply.processingTime}ms (${waited}ms round trip)`
         )
         await speak(reply.text)
-      } catch (error) {
-        if (isCancelled(error)) {
+      } catch (turnError) {
+        if (isCancelled(turnError)) {
           return
         }
-        console.error('Chat error:', error)
-        Alert.alert('Chat Error', (error as Error).message)
+        console.log('[turn] failed:', turnError)
+        setFailure(describeError(turnError))
       } finally {
         // Only if this turn is still the current one: an interrupting turn has
-        // already claimed the slot and put the indicator back up.
+        // already claimed the slot.
         if (turnRef.current === turn) {
           turnRef.current = null
           setThinking(false)
         }
       }
     },
-    [brain, appendMessage, speak]
+    [brain, appendMessage, speak, clearError]
   )
 
   // Register interrupted callback
   useEffect(() => {
     onInterrupted(() => {
-      // Fired before the transcript of what the user said over it, so the last
-      // message is still the reply that was talked over.
+      // Fires before the transcript of what was said over it, so the last message is
+      // still the reply that was interrupted.
       const cutOff = historyRef.current.length - 1
       if (cutOff < 0) {
         return
@@ -216,11 +217,32 @@ export function ConversationScreen(): React.JSX.Element {
     })
   }, [onTranscriptComplete, sessionActive, handleConversationResponse, appendMessage])
 
+  // Engine failures — init, listen, speak, permission — reach the banner too.
+  useEffect(() => {
+    if (!error) {
+      return
+    }
+    setFailure(describeError({ code: errorCode ?? undefined, message: error }))
+  }, [error, errorCode])
+
+  // Count up while a turn is in flight, and reset once it is not.
+  useEffect(() => {
+    if (!thinking) {
+      setThinkingSeconds(0)
+      return
+    }
+    const started = Date.now()
+    const tick = setInterval(() => {
+      setThinkingSeconds(Math.round((Date.now() - started) / 1000))
+    }, 1000)
+    return () => clearInterval(tick)
+  }, [thinking])
+
   // Abandon whatever is in flight when the screen goes away.
   useEffect(() => () => turnRef.current?.abort(), [])
 
-  // Back to listening once the agent has finished speaking, so the conversation
-  // continues without a tap.
+  // The engine returns to 'listening' itself after TTS. This is the backstop for the
+  // paths that land on 'idle' instead, so the conversation continues without a tap.
   useEffect(() => {
     if (prevVoiceStateRef.current === 'speaking' && voiceState === 'idle' && sessionActive) {
       listen()
@@ -231,10 +253,17 @@ export function ConversationScreen(): React.JSX.Element {
   const startSession = async () => {
     const granted = await requestMicrophonePermission()
     if (!granted) {
-      Alert.alert('Microphone needed', 'The agent cannot hear you without microphone access.')
+      setFailure(describeError({ code: 'PERMISSION_DENIED' }))
       return
     }
-    await listen()
+    // Only arm the session if the microphone opened, so the control cannot offer
+    // to end a conversation that is not happening.
+    const listening = await listen()
+    if (!listening) {
+      return
+    }
+    setFailure(null)
+    clearError()
     setSessionActive(true)
   }
 
@@ -246,12 +275,20 @@ export function ConversationScreen(): React.JSX.Element {
     await stopListening()
   }
 
+  const switchBrain = () => {
+    setPreferred(otherBrain.id)
+    setFailure(null)
+    clearError()
+  }
+
   const clearConversation = () => {
     turnRef.current?.abort()
     historyRef.current = []
     setConversationHistory([])
     setInterrupted(new Set())
     setTurnMeta(new Map())
+    setFailure(null)
+    clearError()
     brains.forEach((candidate) => candidate.reset())
   }
 
@@ -275,6 +312,32 @@ export function ConversationScreen(): React.JSX.Element {
           )}
         </View>
       </View>
+
+      {failure && (
+        <View style={styles.banner}>
+          <View style={styles.bannerTextColumn}>
+            <Text style={styles.bannerText}>{failure.message}</Text>
+            {failure.action === 'open-settings' && (
+              <TouchableOpacity onPress={() => Linking.openSettings()}>
+                <Text style={styles.bannerAction}>Open Settings</Text>
+              </TouchableOpacity>
+            )}
+            {failure.action === 'switch-brain' && (
+              <TouchableOpacity onPress={switchBrain}>
+                <Text style={styles.bannerAction}>Use the {otherBrain.label} brain</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          <TouchableOpacity
+            accessibilityLabel="Dismiss"
+            onPress={() => {
+              setFailure(null)
+              clearError()
+            }}>
+            <Text style={styles.bannerDismiss}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      )}
 
       <ScrollView
         ref={chatScrollRef}
@@ -338,7 +401,7 @@ export function ConversationScreen(): React.JSX.Element {
           )
         })}
 
-        {/* What the recogniser has so far, so listening is visibly working. */}
+        {/* What the recogniser has so far. */}
         {transcript.trim().length > 0 && (
           <View style={[styles.bubble, styles.userBubble, styles.pendingBubble]}>
             <Text style={styles.userRole}>You</Text>
@@ -348,7 +411,10 @@ export function ConversationScreen(): React.JSX.Element {
 
         {thinking && (
           <View style={[styles.bubble, styles.assistantBubble, styles.thinkingBubble]}>
-            <Text style={styles.thinkingText}>{brain.label} is thinking…</Text>
+            <Text style={styles.thinkingText}>
+              {brain.label} is thinking…
+              {thinkingSeconds > 2 ? ` ${thinkingSeconds}s` : ''}
+            </Text>
           </View>
         )}
       </ScrollView>
@@ -437,6 +503,37 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#2196F3',
+  },
+  banner: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+    marginHorizontal: 20,
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#fdecea',
+    borderRadius: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: '#c62828',
+  },
+  bannerTextColumn: {
+    flex: 1,
+    gap: 6,
+  },
+  bannerText: {
+    fontSize: 13,
+    lineHeight: 19,
+    color: '#8e1b16',
+  },
+  bannerAction: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: '#c62828',
+  },
+  bannerDismiss: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#8e1b16',
   },
   chatScroll: {
     flex: 1,

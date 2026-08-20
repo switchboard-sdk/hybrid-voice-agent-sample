@@ -56,6 +56,13 @@ async function say(text: string): Promise<void> {
   })
 }
 
+/** An error tagged the way both layers tag theirs. */
+const codedError = (code: string, message: string): Error => {
+  const error = new Error(message)
+  ;(error as { code?: string }).code = code
+  return error
+}
+
 describe('ConversationScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks()
@@ -72,6 +79,14 @@ describe('ConversationScreen', () => {
       eventListeners[name].push(callback)
       return { remove: jest.fn() }
     })
+
+    // clearAllMocks clears calls, not implementations, so a failure set by one test
+    // would leak into the rest.
+    jest.mocked(voiceEngine.requestMicrophonePermission).mockResolvedValue(true)
+    jest.mocked(voiceEngine.listen).mockResolvedValue(undefined)
+    jest.mocked(voiceEngine.stopListening).mockResolvedValue(undefined)
+    jest.mocked(voiceEngine.speak).mockResolvedValue(undefined)
+    jest.mocked(voiceEngine.stopSpeaking).mockResolvedValue(undefined)
 
     jest.spyOn(onDeviceBrain, 'reply').mockResolvedValue(reply('On the device.', 'on-device', 1234))
     jest.spyOn(cloudBrain, 'reply').mockResolvedValue(reply('From the cloud.', 'cloud', 840))
@@ -194,6 +209,108 @@ describe('ConversationScreen', () => {
         { role: 'user', content: 'First question' },
         { role: 'assistant', content: 'On the device.' },
       ])
+    })
+  })
+
+  describe('failures', () => {
+    it('shows a turn failure in a banner rather than a modal', async () => {
+      jest
+        .mocked(onDeviceBrain.reply)
+        .mockRejectedValue(
+          codedError('GENERATE_TIMEOUT', 'The on-device model did not reply in time')
+        )
+      renderScreen()
+      await startTalking()
+      await say('How do I get to the harbour?')
+
+      await waitFor(() =>
+        expect(screen.getByText(/on-device model is not responding/i)).toBeTruthy()
+      )
+      // The turn that failed is still visible; only the answer is missing.
+      expect(screen.getByText('How do I get to the harbour?')).toBeTruthy()
+    })
+
+    it('offers the other brain when one fails, and switching clears the banner', async () => {
+      jest
+        .mocked(onDeviceBrain.reply)
+        .mockRejectedValue(codedError('CLOUD_UNREACHABLE', 'Network request failed'))
+      renderScreen()
+      await startTalking()
+      await say('Any flights tomorrow?')
+
+      await waitFor(() => expect(screen.getByText(/Use the Cloud brain/)).toBeTruthy())
+      await act(async () => {
+        fireEvent.press(screen.getByText(/Use the Cloud brain/))
+      })
+
+      expect(screen.queryByText(/cannot be reached/i)).toBeNull()
+    })
+
+    it('surfaces what the engine reports', async () => {
+      renderScreen()
+
+      await act(async () => {
+        fireNativeEvent('onError', {
+          code: 'INIT_FAILED',
+          message: 'Failed to initialize Switchboard SDK',
+        })
+      })
+
+      expect(screen.getByText(/Switchboard SDK could not start/i)).toBeTruthy()
+    })
+
+    it('takes the banner down once a turn works', async () => {
+      jest
+        .mocked(onDeviceBrain.reply)
+        .mockRejectedValueOnce(codedError('GENERATE_FAILED', 'nope'))
+        .mockResolvedValueOnce(reply('On the device.', 'on-device', 1234))
+      renderScreen()
+      await startTalking()
+      await say('first')
+      await waitFor(() => expect(screen.getByText(/could not answer that turn/i)).toBeTruthy())
+
+      await say('second')
+
+      await waitFor(() => expect(screen.getByText('On the device.')).toBeTruthy())
+      expect(screen.queryByText(/could not answer that turn/i)).toBeNull()
+    })
+
+    it('can be dismissed', async () => {
+      renderScreen()
+      await act(async () => {
+        fireNativeEvent('onError', { code: 'LISTEN_FAILED', message: 'no mic' })
+      })
+
+      await act(async () => {
+        fireEvent.press(screen.getByLabelText('Dismiss'))
+      })
+
+      expect(screen.queryByText(/microphone could not be started/i)).toBeNull()
+    })
+  })
+
+  describe('a session that cannot start', () => {
+    it('offers Settings when the microphone is denied, and stays closed', async () => {
+      jest.mocked(voiceEngine.requestMicrophonePermission).mockResolvedValue(false)
+      renderScreen()
+      await startTalking()
+
+      expect(screen.getByText(/cannot hear you without microphone access/i)).toBeTruthy()
+      expect(screen.getByText('Open Settings')).toBeTruthy()
+      expect(screen.getByText('Talk')).toBeTruthy()
+      expect(voiceEngine.listen).not.toHaveBeenCalled()
+    })
+
+    it('does not arm the session when the microphone fails to open', async () => {
+      jest
+        .mocked(voiceEngine.listen)
+        .mockRejectedValue(codedError('NOT_INITIALIZED', 'Switchboard SDK not initialized'))
+      renderScreen()
+      await startTalking()
+
+      // Not "End conversation" over an engine that never started.
+      expect(screen.getByText('Talk')).toBeTruthy()
+      expect(screen.getByText(/has not started yet/i)).toBeTruthy()
     })
   })
 

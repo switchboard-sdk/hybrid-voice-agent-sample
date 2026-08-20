@@ -52,6 +52,60 @@ describe('useEdgeSpeech', () => {
     })
   })
 
+  describe('reporting failures', () => {
+    it('says whether the call worked, rather than resolving regardless', async () => {
+      const failed = new Error('Switchboard SDK not initialized')
+      ;(failed as { code?: string }).code = 'NOT_INITIALIZED'
+      jest.mocked(voiceEngine.listen).mockRejectedValueOnce(failed)
+      const { result } = renderHook(() => useEdgeSpeech(), { wrapper })
+
+      let started: boolean | undefined
+      await act(async () => {
+        started = await result.current.listen()
+      })
+
+      expect(started).toBe(false)
+      expect(result.current.error).toBe('Switchboard SDK not initialized')
+      expect(result.current.errorCode).toBe('NOT_INITIALIZED')
+    })
+
+    it('reports success plainly', async () => {
+      const { result } = renderHook(() => useEdgeSpeech(), { wrapper })
+
+      let spoke: boolean | undefined
+      await act(async () => {
+        spoke = await result.current.speak('hello')
+      })
+
+      expect(spoke).toBe(true)
+      expect(result.current.error).toBeNull()
+    })
+
+    it('keeps the code of an engine error, which decides the wording', async () => {
+      const { result } = renderHook(() => useEdgeSpeech(), { wrapper })
+
+      act(() => {
+        fireNativeEvent('onError', { code: 'INIT_FAILED', message: 'could not start' })
+      })
+
+      expect(result.current.errorCode).toBe('INIT_FAILED')
+    })
+
+    it('clears an error so a dismissed banner stays dismissed', async () => {
+      const { result } = renderHook(() => useEdgeSpeech(), { wrapper })
+      act(() => {
+        fireNativeEvent('onError', { code: 'LISTEN_FAILED', message: 'no mic' })
+      })
+
+      act(() => {
+        result.current.clearError()
+      })
+
+      expect(result.current.error).toBeNull()
+      expect(result.current.errorCode).toBeNull()
+    })
+  })
+
   describe('transcript', () => {
     it('starts empty', () => {
       const { result } = renderHook(() => useEdgeSpeech(), { wrapper })
