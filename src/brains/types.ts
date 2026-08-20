@@ -55,14 +55,52 @@ export interface Brain {
  * it. Tuned for the smaller of the two: what the 1B on-device model can follow,
  * a cloud model can follow as well.
  *
- * Deliberately minimal — enough that the answers match the travel framing on
- * screen. Hand-tuning it against the small model is its own step.
+ * Every line is an instruction, because two ten-question passes on device showed
+ * that is the only kind the 1B obeys. A first draft described the situation — "you
+ * have no internet, no booking system and no live data" — and the model quoted a
+ * taxi fare and reported tomorrow's weather from airplane mode, while the same
+ * draft's length rule, an instruction, held on all twenty turns.
+ *
+ * What each rule is paying for, in the order it was learnt:
+ *
+ * - **Refusing and redirecting are one sentence, not two rules.** Split across
+ *   rules, the model refused and never redirected, four times out of four.
+ * - **Rule 3 names the hedges** — "around", "about", "a few" — because banning
+ *   invented specifics only taught it to estimate them: "around R200", "a few
+ *   days", "a bit of a hike". The letter was kept and the point was lost.
+ * - **Rule 4 exists because dropping "no booking system" cost a working refusal.**
+ *   Booking is not a lookup, so a rule about looking things up does not cover it,
+ *   and the model offered to make a reservation and be phoned back.
+ * - **Rule 5 forbids assuming where the traveller is.** One hedged fare in rand
+ *   became a Cape Town frame three turns later, then a named clinic "a short taxi
+ *   ride from the harbour". Fabrications compound: both brains read this
+ *   transcript, so one invented detail furnishes the next answer.
+ * - **Rule 7 dictates the sentence rather than the behaviour.** Naming the form —
+ *   "a poem" — did not stop it writing thirteen lines of verse, twice. A direct
+ *   instruction in the user's turn outranks a rule in the system prompt on a model
+ *   this size, so this one may still lose; the reliable fix for that is code, not
+ *   wording.
+ *
+ * The example sits under the rule it demonstrates rather than at the end, and
+ * spells no role labels: the model copies anything that looks like a transcript
+ * label straight into its reply.
+ *
+ * It reaches the model as a system message on both paths — the node applies the
+ * chat template itself, and `CloudBrain` sends it as `role: 'system'`.
  */
-export const DEFAULT_SYSTEM_PROMPT =
-  'You are the voice of a travel assistant app. Help the traveller with destinations, ' +
-  'getting around, and what to do when plans change. Answer in one or two short ' +
-  'sentences, because your answer is spoken aloud. Never invent flight numbers, ' +
-  'schedules or prices.'
+export const DEFAULT_SYSTEM_PROMPT = [
+  'You are the voice of a travel assistant app. The traveller speaks to you and hears your reply read aloud.',
+  '',
+  '1. Reply in one or two short sentences, always. No lists, no verse, no headings, no emoji.',
+  '2. You are offline and cannot look anything up. When an answer needs a fact you cannot check — a time, a price, the weather, an address, or what some particular place has — say you cannot check it offline and suggest who can, in the same sentence.',
+  '3. Never give a figure you cannot check. Not as an estimate, not as a range, not as "around" or "about" or "a few". Saying you cannot check it is always better than a number that sounds right.',
+  '   Asked "How much is a taxi to the harbour?", a good reply is: "I can\'t check fares while offline, but the taxi rank at the terminal will quote you before you set off."',
+  '4. You cannot book, buy, reserve, cancel or phone anything, and nobody can call you. Asked to, say the traveller has to do it themselves and say where.',
+  '5. Never say what a named place or business has or does, and never assume which town or country the traveller is in, unless they told you.',
+  '6. Give general guidance freely — how people usually get around, what to do when a plan falls through, what to ask for.',
+  '7. If asked for anything that is not travel help — a poem, a story, a joke, trivia, code — reply exactly: "I can only help with travel."',
+  '8. Answer the traveller\'s latest message. Never write "Me:", "You:" or "Assistant:".',
+].join('\n')
 
 /** Build an Error carrying a machine `code`, matching VoiceEngine's convention. */
 export function brainError(code: string, message: string): Error {

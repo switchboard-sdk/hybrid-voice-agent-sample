@@ -189,6 +189,29 @@ describe('on-device language model', () => {
     expect(graph.connections.some((c: any) => JSON.stringify(c).includes('llmNode'))).toBe(false)
   })
 
+  it('leaves the reply ceiling and the seed out of the graph unless they are set', async () => {
+    // An older node logs an unknown config key as an error, and a fixed seed would
+    // make a demo answer the same way every time.
+    voiceEngine.initialize('id', 'secret')
+    await voiceEngine.listen()
+
+    const graph = findAction('createEngine')!.params.params.config.graph
+    const llm = graph.nodes.find((n: any) => n.id === 'llmNode')
+    expect(llm.config).not.toHaveProperty('maxTokens')
+    expect(llm.config).not.toHaveProperty('seed')
+  })
+
+  it('passes a configured reply ceiling and seed to the node', async () => {
+    voiceEngine.initialize('id', 'secret')
+    voiceEngine.configure({ llmMaxTokens: 120, llmSeed: 7 })
+    await voiceEngine.listen()
+
+    const graph = findAction('createEngine')!.params.params.config.graph
+    const llm = graph.nodes.find((n: any) => n.id === 'llmNode')
+    expect(llm.config.maxTokens).toBe(120)
+    expect(llm.config.seed).toBe(7)
+  })
+
   it('generate() prompts the node and resolves on responseReceived', async () => {
     voiceEngine.initialize('id', 'secret')
     const pending = voiceEngine.generate('how are you?')

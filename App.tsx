@@ -16,6 +16,9 @@ export default function App(): React.JSX.Element {
         appId={SWITCHBOARD_APP_ID}
         appSecret={SWITCHBOARD_APP_SECRET}
         vadSensitivity={0.5}
+        // Below the pipeline's 0.8: the rules in the prompt only hold if the
+        // sampling is conservative enough to follow them.
+        llmTemperature={0.4}
         llmInstructions={DEFAULT_SYSTEM_PROMPT}>
         <ConversationScreen />
       </EdgeSpeechProvider>

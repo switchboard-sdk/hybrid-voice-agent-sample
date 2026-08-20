@@ -23,6 +23,8 @@ export interface EdgeSpeechProviderProps {
   llmModelPath?: string
   llmContextSize?: number
   llmTemperature?: number
+  llmMaxTokens?: number
+  llmSeed?: number
   llmInstructions?: string
   children?: ReactNode
 }
@@ -44,6 +46,8 @@ export function EdgeSpeechProvider({
   llmModelPath,
   llmContextSize,
   llmTemperature,
+  llmMaxTokens,
+  llmSeed,
   llmInstructions,
   children,
 }: EdgeSpeechProviderProps) {
@@ -81,6 +85,8 @@ export function EdgeSpeechProvider({
       ...(llmModelPath !== undefined && { llmModelPath }),
       ...(llmContextSize !== undefined && { llmContextSize }),
       ...(llmTemperature !== undefined && { llmTemperature }),
+      ...(llmMaxTokens !== undefined && { llmMaxTokens }),
+      ...(llmSeed !== undefined && { llmSeed }),
       ...(llmInstructions !== undefined && { llmInstructions }),
     })
   }, [
@@ -92,6 +98,8 @@ export function EdgeSpeechProvider({
     llmModelPath,
     llmContextSize,
     llmTemperature,
+    llmMaxTokens,
+    llmSeed,
     llmInstructions,
   ])
 
