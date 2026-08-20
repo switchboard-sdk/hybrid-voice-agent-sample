@@ -9,8 +9,8 @@
  *   add it to `brains`. It appears in the UI on its own — the picker is rendered
  *   from this list.
  * - **Route on something other than the user's choice.** `route` is handed the
- *   selection from the UI and returns a brain; nothing stops it consulting
- *   connectivity, the length of the conversation, or a latency budget instead.
+ *   selection from the UI and whether there is a connection; nothing stops it
+ *   consulting the length of the conversation or a latency budget as well.
  */
 
 import { CloudBrain } from './CloudBrain'
@@ -36,16 +36,19 @@ export const cloudBrain = new CloudBrain({
 export const brains: readonly Brain[] = [onDeviceBrain, cloudBrain]
 
 /**
- * Which brain answers the next turn.
+ * Which brain answers the next turn: what the user picked, unless there is no
+ * connection and they picked a brain that needs one.
  *
- * Today that is simply what the user picked. It stays a function because the
- * choice is the interesting part of this file: a fork that routes automatically
- * changes this and nothing else.
- *
- * Note what it deliberately does not do: reroute away from a brain that cannot
- * answer. Picking the cloud with no API key fails with a message that says so,
- * which is more useful than a silent fallback that looks like the cloud working.
+ * Offline is the one thing that overrides the choice, because it is knowable
+ * before the turn and the app says so out loud when it happens — see
+ * `src/connectivity.ts`. A failure is different: picking the cloud with no API
+ * key fails with a message saying so, which is more useful than a silent fallback
+ * that looks like the cloud working.
  */
-export function route(preferred: BrainId): Brain {
-  return brains.find((brain) => brain.id === preferred) ?? onDeviceBrain
+export function route(preferred: BrainId, online: boolean = true): Brain {
+  const chosen = brains.find((brain) => brain.id === preferred) ?? onDeviceBrain
+  if (online || !chosen.requiresNetwork) {
+    return chosen
+  }
+  return brains.find((brain) => !brain.requiresNetwork) ?? onDeviceBrain
 }

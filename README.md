@@ -75,6 +75,7 @@ src/
     router.ts               which brain answers — the file to change
   screens/                  UI
     ConversationScreen.tsx  the whole app: transcript, state, per-turn badges
+  connectivity.ts           whether there is a connection, and the spoken notice
 modules/edgespeech-native/  the only native code: a C++ TurboModule + podspec
 scripts/postinstall.js      framework download
 ```
@@ -148,6 +149,7 @@ swaps is what answers, and both answerers implement the same interface:
 interface Brain {
   readonly id: BrainId
   readonly label: string
+  readonly requiresNetwork: boolean
   reply(
     transcript: string,
     history: ConversationMessage[],
@@ -242,6 +244,34 @@ For those, put a proxy you control between the app and the provider, keep the ke
 server-side, and point `EXPO_PUBLIC_CLOUD_LLM_BASE_URL` at the proxy. Nothing in
 the app changes: it already sends the same chat-completions request, and the key it
 sends is then whatever the proxy expects rather than the real one.
+
+## Going offline
+
+The cloud brain is the only part of the app that needs a connection, so losing one
+withdraws it rather than leaving it to fail: `useOnline` in `src/connectivity.ts`
+follows the OS's own network state, `route` refuses to hand out a brain that declares
+`requiresNetwork` while there is none, and the picker dims it. An unknown state
+counts as connected — only a definite answer takes a brain away.
+
+Because the OS reports the change, airplane mode registers the moment it is switched
+on rather than on the next request. If it lands while the cloud is mid-turn, that
+turn is abandoned and its question asked again on the device, so the conversation
+carries on instead of producing an error about a request that was never going to
+arrive.
+
+The app also says so out loud, which is the point of it: _"You're offline now. I'll
+answer on this phone, so a reply may take a moment."_ The reply that follows queues
+behind the notice rather than cutting it off — the TTS node plays what it is given in
+order — so the notice is heard whole and the wait it warns about is the reply being
+generated. It stays quiet in two cases: with no conversation in progress, where an
+announcement is the app talking to itself, and for someone already on the on-device
+brain, who loses nothing worth talking over their reply for. The pick itself is kept
+either way, so the cloud answers again on its own once the connection returns.
+
+What gets picked up comes from the transcript — a question with no answer under it —
+rather than from whatever turn was in flight. By the time the OS reports the change
+the request may already have died, or never started because the words were still
+being transcribed, and in both cases the question is still there to answer.
 
 ## When things fail
 

@@ -10,7 +10,8 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
-import { brains, route, type BrainId, type ConversationMessage } from '../brains'
+import { brains, route, type Brain, type BrainId, type ConversationMessage } from '../brains'
+import { OFFLINE_NOTICE, useOnline } from '../connectivity'
 import { describeError, isCancelled, type ErrorDescription } from '../errors'
 import { useEdgeSpeech, type VoiceState } from '../voice'
 
@@ -113,20 +114,29 @@ export function ConversationScreen(): React.JSX.Element {
   // timeouts and a retry on one turn, which needs to be legible while it happens.
   const [thinkingSeconds, setThinkingSeconds] = useState(0)
 
-  const brain = route(preferred)
+  const online = useOnline()
+  // The brain the user picked, and the one that will answer. They differ only when
+  // there is no connection and the pick needs one.
+  const picked = route(preferred, true)
+  const brain = route(preferred, online)
   // What the banner offers when a brain fails: no connection is when the on-device
   // path earns its place, and a model that will not load is when the cloud does.
-  const otherBrain = brains.find((candidate) => candidate.id !== preferred) ?? brain
+  // Nothing is offered while offline — there is no second brain to offer.
+  const otherBrain = brains.find(
+    (candidate) => candidate.id !== brain.id && (online || !candidate.requiresNetwork)
+  )
   const activity = activityOf(voiceState, thinking)
   const chatScrollRef = useRef<ScrollView>(null)
   const prevVoiceStateRef = useRef(voiceState)
+  const wasOnlineRef = useRef(online)
 
   // The transcript the brain is handed. Mirrors conversationHistory so a turn that
   // starts before React re-renders still sees every prior message.
   const historyRef = useRef<ConversationMessage[]>([])
 
-  // The turn in flight, so a new one can abandon it.
-  const turnRef = useRef<AbortController | null>(null)
+  // The turn in flight, so a new one can abandon it. The brain comes along because
+  // losing the connection has to tell a doomed cloud turn from a local one.
+  const turnRef = useRef<{ controller: AbortController; brain: Brain } | null>(null)
 
   /** Append and return the index the message landed at, for annotating it. */
   const appendMessage = useCallback((message: ConversationMessage): number => {
@@ -140,9 +150,9 @@ export function ConversationScreen(): React.JSX.Element {
     async (userText: string, history: ConversationMessage[]) => {
       // The mic stays live while the brain thinks, so talking over the pause lands
       // here again and abandons the turn below.
-      turnRef.current?.abort()
+      turnRef.current?.controller.abort()
       const turn = new AbortController()
-      turnRef.current = turn
+      turnRef.current = { controller: turn, brain }
       setThinking(true)
 
       const startedAt = Date.now()
@@ -174,7 +184,7 @@ export function ConversationScreen(): React.JSX.Element {
       } finally {
         // Only if this turn is still the current one: an interrupting turn has
         // already claimed the slot.
-        if (turnRef.current === turn) {
+        if (turnRef.current?.controller === turn) {
           turnRef.current = null
           setThinking(false)
         }
@@ -187,9 +197,10 @@ export function ConversationScreen(): React.JSX.Element {
   useEffect(() => {
     onInterrupted(() => {
       // Fires before the transcript of what was said over it, so the last message is
-      // still the reply that was interrupted.
+      // still the reply that was interrupted — unless what was talked over was the
+      // offline notice, which is nobody's turn and annotates nothing.
       const cutOff = historyRef.current.length - 1
-      if (cutOff < 0) {
+      if (historyRef.current[cutOff]?.role !== 'assistant') {
         return
       }
       setInterrupted((prev) => new Set(prev).add(cutOff))
@@ -239,7 +250,45 @@ export function ConversationScreen(): React.JSX.Element {
   }, [thinking])
 
   // Abandon whatever is in flight when the screen goes away.
-  useEffect(() => () => turnRef.current?.abort(), [])
+  useEffect(() => () => turnRef.current?.controller.abort(), [])
+
+  // Losing the connection mid-conversation. `route` has already withdrawn the cloud
+  // brain by the time this runs, so the notice is spoken and the question the cloud
+  // was about to fail is asked again on the device — the wait the notice warns about.
+  //
+  // Two things it stays quiet for: no conversation, since an announcement into a
+  // closed mic is the app talking to itself, and a pick that never needed the
+  // network, which loses nothing worth talking over a reply for.
+  useEffect(() => {
+    const wasOnline = wasOnlineRef.current
+    wasOnlineRef.current = online
+    if (online || !wasOnline || !sessionActive || !picked.requiresNetwork) {
+      return
+    }
+
+    // Abandon a cloud turn rather than waiting for a request that cannot arrive.
+    const inFlight = turnRef.current
+    if (inFlight?.brain.requiresNetwork) {
+      inFlight.controller.abort()
+    }
+
+    // What to pick up is a question in the transcript with no answer under it, not
+    // whatever turn happened to be in flight: the request may have already died on
+    // the way down, or never started because the words were still being transcribed.
+    const history = historyRef.current
+    const asked = history[history.length - 1]
+    const unanswered =
+      asked?.role === 'user' ? { text: asked.content, history: history.slice(0, -1) } : null
+    // The cloud's complaint about a connection that is gone is being answered by
+    // going on-device, so it is not news.
+    setFailure(null)
+    clearError()
+
+    speak(OFFLINE_NOTICE)
+    if (unanswered) {
+      handleConversationResponse(unanswered.text, unanswered.history)
+    }
+  }, [online, sessionActive, picked, speak, clearError, handleConversationResponse])
 
   // The engine returns to 'listening' itself after TTS. This is the backstop for the
   // paths that land on 'idle' instead, so the conversation continues without a tap.
@@ -269,20 +318,23 @@ export function ConversationScreen(): React.JSX.Element {
 
   const endSession = async () => {
     setSessionActive(false)
-    turnRef.current?.abort()
+    turnRef.current?.controller.abort()
     setThinking(false)
     await stopSpeaking()
     await stopListening()
   }
 
   const switchBrain = () => {
+    if (!otherBrain) {
+      return
+    }
     setPreferred(otherBrain.id)
     setFailure(null)
     clearError()
   }
 
   const clearConversation = () => {
-    turnRef.current?.abort()
+    turnRef.current?.controller.abort()
     historyRef.current = []
     setConversationHistory([])
     setInterrupted(new Set())
@@ -322,7 +374,7 @@ export function ConversationScreen(): React.JSX.Element {
                 <Text style={styles.bannerAction}>Open Settings</Text>
               </TouchableOpacity>
             )}
-            {failure.action === 'switch-brain' && (
+            {failure.action === 'switch-brain' && otherBrain && (
               <TouchableOpacity onPress={switchBrain}>
                 <Text style={styles.bannerAction}>Use the {otherBrain.label} brain</Text>
               </TouchableOpacity>
@@ -429,11 +481,19 @@ export function ConversationScreen(): React.JSX.Element {
             appears here without touching this screen. */}
         <View style={styles.brainPicker}>
           {brains.map((candidate) => {
-            const selected = candidate.id === preferred
+            // The brain that will answer, not the one that was picked: no connection
+            // withdraws the cloud and the picker has to say so.
+            const selected = candidate.id === brain.id
+            const unavailable = !online && candidate.requiresNetwork
             return (
               <TouchableOpacity
                 key={candidate.id}
-                style={[styles.brainOption, selected && styles.brainOptionSelected]}
+                style={[
+                  styles.brainOption,
+                  selected && styles.brainOptionSelected,
+                  unavailable && styles.brainOptionUnavailable,
+                ]}
+                disabled={unavailable}
                 onPress={() => setPreferred(candidate.id)}>
                 <Text style={[styles.brainOptionText, selected && styles.brainOptionTextSelected]}>
                   {candidate.label}
@@ -443,7 +503,9 @@ export function ConversationScreen(): React.JSX.Element {
           })}
         </View>
         <Text style={styles.brainPickerHint}>
-          Switch any time — both brains read the same conversation.
+          {online
+            ? 'Switch any time — both brains read the same conversation.'
+            : 'No connection — answering on this phone.'}
         </Text>
 
         <TouchableOpacity
@@ -677,6 +739,9 @@ const styles = StyleSheet.create({
   },
   brainOptionSelected: {
     backgroundColor: '#2196F3',
+  },
+  brainOptionUnavailable: {
+    opacity: 0.4,
   },
   brainOptionText: {
     fontSize: 14,

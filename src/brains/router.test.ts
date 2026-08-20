@@ -23,6 +23,14 @@ describe('route', () => {
     // device is always possible, so it is the safe default.
     expect(route('nonsense' as BrainId)).toBe(onDeviceBrain)
   })
+
+  it('withdraws a brain that needs a connection when there is none', () => {
+    expect(route('cloud', false)).toBe(onDeviceBrain)
+  })
+
+  it('leaves a local pick alone when there is no connection', () => {
+    expect(route('on-device', false)).toBe(onDeviceBrain)
+  })
 })
 
 describe('brains', () => {
@@ -41,5 +49,10 @@ describe('brains', () => {
 
   it('gives every brain a label to show', () => {
     brains.forEach((brain) => expect(brain.label.trim()).not.toHaveLength(0))
+  })
+
+  it('keeps a brain that answers with no connection', () => {
+    // Offline routing has somewhere to go only while this holds.
+    expect(brains.some((brain) => !brain.requiresNetwork)).toBe(true)
   })
 })
