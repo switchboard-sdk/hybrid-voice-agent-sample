@@ -32,6 +32,12 @@ export interface Brain {
   readonly id: BrainId
   /** Short label for the UI. */
   readonly label: string
+  /**
+   * Whether answering needs a connection. Declared here rather than inferred from
+   * the id, so `route` can withdraw a brain that cannot answer offline and the
+   * picker can dim it without naming an implementation.
+   */
+  readonly requiresNetwork: boolean
 
   /**
    * Reply to `transcript`, given the conversation up to but excluding it.

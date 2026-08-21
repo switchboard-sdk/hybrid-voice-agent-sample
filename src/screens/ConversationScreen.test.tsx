@@ -5,9 +5,14 @@ import { ConversationScreen } from './ConversationScreen'
 import { EdgeSpeechProvider } from '../voice'
 import { voiceEngine } from '../voice/VoiceEngine'
 import { cloudBrain, onDeviceBrain, type BrainReply } from '../brains'
+import { OFFLINE_NOTICE } from '../connectivity'
 
 // Capture addListener callbacks by event name so tests can simulate the pipeline.
 const eventListeners: Record<string, Array<(data?: unknown) => void>> = {}
+
+jest.mock('expo-network')
+
+const network = jest.requireMock('expo-network') as typeof import('../../__mocks__/expo-network')
 
 jest.mock('../voice/VoiceEngine', () => ({
   __esModule: true,
@@ -66,6 +71,7 @@ const codedError = (code: string, message: string): Error => {
 describe('ConversationScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    network.resetNetworkMock()
     Object.keys(eventListeners).forEach((key) => {
       eventListeners[key] = []
     })
@@ -359,6 +365,154 @@ describe('ConversationScreen', () => {
       expect(screen.getByText('interrupted')).toBeTruthy()
       // Not a turn of its own: the transcript is still the two real messages.
       expect(screen.queryByTestId('turn-brain-3')).toBeNull()
+    })
+
+    it('marks nothing when what was talked over was not a reply', async () => {
+      // The offline notice is spoken while the last message is still the question,
+      // which is not a turn that can be cut off.
+      jest.mocked(onDeviceBrain.reply).mockReturnValue(new Promise(() => {}))
+      renderScreen()
+      await startTalking()
+      await say('How do I get to the harbour?')
+
+      await act(async () => {
+        fireNativeEvent('onInterrupted')
+      })
+
+      expect(screen.queryByText('interrupted')).toBeNull()
+    })
+  })
+
+  describe('losing the connection', () => {
+    /** Report the connection dropping, the way the OS does. */
+    async function goOffline(): Promise<void> {
+      await act(async () => {
+        network.setNetworkState({ isConnected: false, isInternetReachable: false })
+      })
+    }
+
+    /** Pick the cloud brain, which is only possible while there is a connection. */
+    async function chooseCloud(): Promise<void> {
+      await act(async () => {
+        fireEvent.press(screen.getByText('Cloud'))
+      })
+    }
+
+    it('says so out loud and takes the cloud brain away', async () => {
+      renderScreen()
+      await startTalking()
+      await chooseCloud()
+
+      await goOffline()
+
+      expect(voiceEngine.speak).toHaveBeenCalledWith(OFFLINE_NOTICE)
+      expect(screen.getByText('Cloud')).toBeDisabled()
+      expect(screen.getByText(/No connection/)).toBeTruthy()
+    })
+
+    it('cannot be talked back onto the cloud while it lasts', async () => {
+      renderScreen()
+      await startTalking()
+      await goOffline()
+
+      await chooseCloud()
+      await say('Any flights tomorrow?')
+
+      await waitFor(() => expect(onDeviceBrain.reply).toHaveBeenCalled())
+      expect(cloudBrain.reply).not.toHaveBeenCalled()
+    })
+
+    it('answers the question the cloud was still holding', async () => {
+      // A request that hangs until it is abandoned, which is what a cloud turn
+      // becomes the moment the connection goes.
+      jest.mocked(cloudBrain.reply).mockImplementation(
+        (_text, _history, signal) =>
+          new Promise((_resolve, reject) => {
+            signal?.addEventListener('abort', () =>
+              reject(codedError('CANCELLED', 'The reply was cancelled'))
+            )
+          })
+      )
+      renderScreen()
+      await startTalking()
+      await chooseCloud()
+      await say('Any flights tomorrow?')
+
+      await goOffline()
+
+      expect(voiceEngine.speak).toHaveBeenCalledWith(OFFLINE_NOTICE)
+      await waitFor(() => expect(screen.getByText('On the device.')).toBeTruthy())
+      expect(jest.mocked(onDeviceBrain.reply).mock.calls[0][0]).toBe('Any flights tomorrow?')
+      // The question is not asked twice, and an abandoned turn is not a failure.
+      expect(screen.getAllByText('Any flights tomorrow?')).toHaveLength(1)
+      expect(screen.getByTestId('turn-brain-1').props.children).toBe('On-device')
+      expect(screen.queryByText(/cannot be reached/i)).toBeNull()
+    })
+
+    it('picks up a question left unanswered with no turn in flight', async () => {
+      // The cloud turn can be gone by the time the connectivity change lands, so
+      // what to re-ask comes from the transcript rather than from a live turn.
+      jest.mocked(cloudBrain.reply).mockRejectedValue(codedError('CANCELLED', 'abandoned'))
+      renderScreen()
+      await startTalking()
+      await chooseCloud()
+      await say('Any flights tomorrow?')
+      expect(screen.queryByText('From the cloud.')).toBeNull()
+
+      await goOffline()
+
+      await waitFor(() => expect(screen.getByText('On the device.')).toBeTruthy())
+      expect(jest.mocked(onDeviceBrain.reply).mock.calls[0][0]).toBe('Any flights tomorrow?')
+      expect(screen.getAllByText('Any flights tomorrow?')).toHaveLength(1)
+    })
+
+    it('leaves a turn on the device alone', async () => {
+      jest.mocked(onDeviceBrain.reply).mockReturnValue(new Promise(() => {}))
+      renderScreen()
+      await startTalking()
+      await say('How do I get to the harbour?')
+
+      await goOffline()
+
+      // Nothing was taken away, so nothing is said over the reply being generated.
+      expect(voiceEngine.speak).not.toHaveBeenCalledWith(OFFLINE_NOTICE)
+      expect(onDeviceBrain.reply).toHaveBeenCalledTimes(1)
+    })
+
+    it('stays quiet when no conversation is happening', async () => {
+      renderScreen()
+
+      await goOffline()
+
+      expect(voiceEngine.speak).not.toHaveBeenCalled()
+      expect(screen.getByText('Cloud')).toBeDisabled()
+    })
+
+    it('offers no other brain for a failure while there is none', async () => {
+      jest.mocked(onDeviceBrain.reply).mockRejectedValue(codedError('GENERATE_FAILED', 'nope'))
+      renderScreen()
+      await startTalking()
+      await goOffline()
+      await say('How do I get to the harbour?')
+
+      await waitFor(() => expect(screen.getByText(/could not answer that turn/i)).toBeTruthy())
+      expect(screen.queryByText(/Use the Cloud brain/)).toBeNull()
+    })
+
+    it('hands the cloud brain back when the connection returns', async () => {
+      renderScreen()
+      await startTalking()
+      await chooseCloud()
+      await goOffline()
+
+      await act(async () => {
+        network.setNetworkState({ isConnected: true, isInternetReachable: true })
+      })
+      await say('Any flights tomorrow?')
+
+      // The pick was kept through the outage, so it answers again without a tap.
+      await waitFor(() => expect(screen.getByText('From the cloud.')).toBeTruthy())
+      expect(screen.getByText(/Switch any time/)).toBeTruthy()
     })
   })
 
