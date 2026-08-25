@@ -99,6 +99,7 @@ export class CloudBrain implements Brain {
   readonly id: BrainId = 'cloud'
   readonly label = 'Cloud'
   readonly requiresNetwork = true
+  readonly requiresModel = false
 
   private readonly baseUrl: string
   private readonly apiKey?: string

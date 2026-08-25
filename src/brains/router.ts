@@ -9,7 +9,7 @@
  *   add it to `brains`. It appears in the UI on its own — the picker is rendered
  *   from this list.
  * - **Route on something other than the user's choice.** `route` is handed the
- *   selection from the UI and whether there is a connection; nothing stops it
+ *   selection from the UI and what the phone can currently do; nothing stops it
  *   consulting the length of the conversation or a latency budget as well.
  */
 
@@ -35,20 +35,43 @@ export const cloudBrain = new CloudBrain({
 /** Every brain the app can route to, in the order the UI offers them. */
 export const brains: readonly Brain[] = [onDeviceBrain, cloudBrain]
 
+/** What the phone can do right now, which is what a brain needs to be able to answer. */
+export interface Availability {
+  /** Whether there is a connection. */
+  online: boolean
+  /** Whether the model's weights are on the phone — see `src/model`. */
+  modelReady: boolean
+}
+
+/** Everything available, the state the app spends nearly all its time in. */
+const FULLY_AVAILABLE: Availability = { online: true, modelReady: true }
+
 /**
- * Which brain answers the next turn: what the user picked, unless there is no
- * connection and they picked a brain that needs one.
- *
- * Offline is the one thing that overrides the choice, because it is knowable
- * before the turn and the app says so out loud when it happens — see
- * `src/connectivity.ts`. A failure is different: picking the cloud with no API
- * key fails with a message saying so, which is more useful than a silent fallback
- * that looks like the cloud working.
+ * Whether `brain` could answer right now. Exported so the picker can dim an
+ * option without learning which implementation it is dimming.
  */
-export function route(preferred: BrainId, online: boolean = true): Brain {
+export function canAnswer(brain: Brain, availability: Availability): boolean {
+  if (brain.requiresNetwork && !availability.online) {
+    return false
+  }
+  return !brain.requiresModel || availability.modelReady
+}
+
+/**
+ * Which brain answers the next turn: what the user picked, unless the phone
+ * cannot currently give that brain what it needs.
+ *
+ * Only these two things override the choice, because both are knowable before the
+ * turn: the app says the offline one out loud when it happens (see
+ * `src/connectivity.ts`) and puts the missing model in front of the conversation
+ * (see `src/screens/ModelDownloadScreen.tsx`). A failure is different — picking
+ * the cloud with no API key fails with a message saying so, which is more useful
+ * than a silent fallback that looks like the cloud working.
+ */
+export function route(preferred: BrainId, availability: Availability = FULLY_AVAILABLE): Brain {
   const chosen = brains.find((brain) => brain.id === preferred) ?? onDeviceBrain
-  if (online || !chosen.requiresNetwork) {
+  if (canAnswer(chosen, availability)) {
     return chosen
   }
-  return brains.find((brain) => !brain.requiresNetwork) ?? onDeviceBrain
+  return brains.find((brain) => canAnswer(brain, availability)) ?? onDeviceBrain
 }

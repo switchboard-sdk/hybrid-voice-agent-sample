@@ -170,7 +170,16 @@ describe('VoiceEngine transport', () => {
   })
 })
 
+/** Stands in for the model the app downloads on first launch. */
+const MODEL_PATH = '/var/mobile/Documents/Llama-3.2-1B-Instruct-Q4_0.gguf'
+
 describe('on-device language model', () => {
+  // Without this there is no model on the phone, which the last two tests here
+  // cover — every other one assumes the download has happened.
+  beforeEach(() => {
+    voiceEngine.configure({ llmModelPath: MODEL_PATH })
+  })
+
   it('registers the LlamaCpp extension on initialize', () => {
     voiceEngine.initialize('id', 'secret')
 
@@ -185,7 +194,7 @@ describe('on-device language model', () => {
     const graph = findAction('createEngine')!.params.params.config.graph
     const llm = graph.nodes.find((n: any) => n.id === 'llmNode')
     expect(llm.type).toBe('LlamaCpp.LLM')
-    expect(llm.config).not.toHaveProperty('modelPath')
+    expect(llm.config.modelPath).toBe(MODEL_PATH)
     expect(graph.connections.some((c: any) => JSON.stringify(c).includes('llmNode'))).toBe(false)
   })
 
@@ -452,6 +461,29 @@ describe('on-device language model', () => {
     )
 
     expect(states).toEqual([])
+  })
+
+  it('leaves the node out of the graph when there is no model on the phone', async () => {
+    // The node would construct, load nothing, and then abandon every turn without
+    // an error event. Speech in and out is untouched, so the cloud brain still works.
+    voiceEngine.configure({ llmModelPath: '' })
+    voiceEngine.initialize('id', 'secret')
+    await voiceEngine.listen()
+
+    const graph = findAction('createEngine')!.params.params.config.graph
+    expect(graph.nodes.some((n: any) => n.id === 'llmNode')).toBe(false)
+    expect(graph.nodes.some((n: any) => n.id === 'sttNode')).toBe(true)
+    expect(graph.nodes.some((n: any) => n.id === 'ttsNode')).toBe(true)
+  })
+
+  it('generate() says there is no model rather than prompting a node that is not there', async () => {
+    voiceEngine.configure({ llmModelPath: '' })
+    voiceEngine.initialize('id', 'secret')
+
+    await expect(voiceEngine.generate('hello')).rejects.toMatchObject({
+      code: 'MODEL_NOT_AVAILABLE',
+    })
+    expect(findAction('prompt')).toBeUndefined()
   })
 })
 

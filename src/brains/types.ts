@@ -38,6 +38,13 @@ export interface Brain {
    * picker can dim it without naming an implementation.
    */
   readonly requiresNetwork: boolean
+  /**
+   * Whether answering needs the model's weights on the phone. Declared here for
+   * the same reason as `requiresNetwork`: a fresh install that has not fetched
+   * them has no on-device brain, and `route` has to withdraw it without naming an
+   * implementation.
+   */
+  readonly requiresModel: boolean
 
   /**
    * Reply to `transcript`, given the conversation up to but excluding it.

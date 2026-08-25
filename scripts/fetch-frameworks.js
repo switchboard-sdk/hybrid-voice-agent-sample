@@ -6,6 +6,10 @@
  * No model weights live in git — they arrive here, packaged inside the
  * frameworks, from the public Switchboard bucket. Roughly 2.3 GB in total.
  *
+ * The language model's weights are dropped again straight after extraction: the
+ * app fetches them on first launch instead, so they must not reach the build. See
+ * `src/model` for the other half of that.
+ *
  * Environment:
  *   SWITCHBOARD_SDK_CHANNEL   bucket path to pull from (default: develop)
  *   SWITCHBOARD_SDK_VERSION   SDK version in the archive names (default: 3.2.5)
@@ -38,6 +42,14 @@ const PACKAGES = [
   'SwitchboardSherpa',
   'SwitchboardLLM',
 ]
+
+/**
+ * Weights to delete after extracting a package, per package. The LLM extension
+ * ships its GGUF inside each slice of its xcframework and CocoaPods embeds the
+ * framework whole, so leaving it here is what put a gigabyte in the built app.
+ * `src/model` downloads it to the phone on first launch instead.
+ */
+const STRIPPED_WEIGHTS = { SwitchboardLLM: /\.gguf$/ }
 
 const ATTEMPTS = 3
 
@@ -110,6 +122,34 @@ async function fetchToFile(packageName, zipPath, message) {
   return response.headers.get('etag')
 }
 
+function* files(dir) {
+  for (const entry of fs.readdirSync(dir, { recursive: true, withFileTypes: true })) {
+    if (entry.isFile()) {
+      yield path.join(entry.parentPath, entry.name)
+    }
+  }
+}
+
+/** Drop the weights the app downloads at runtime. Returns the bytes freed. */
+function stripBundledWeights(packageName, packageDir) {
+  const pattern = STRIPPED_WEIGHTS[packageName]
+  if (!pattern || !fs.existsSync(packageDir)) {
+    return 0
+  }
+  let freed = 0
+  for (const file of files(packageDir)) {
+    if (!pattern.test(file)) {
+      continue
+    }
+    freed += fs.statSync(file).size
+    fs.rmSync(file)
+  }
+  return freed
+}
+
+const megabytes = (bytes) => `${(bytes / 1024 / 1024).toFixed(0)} MB`
+
+/** Fetch and extract one package. Resolves to the bytes of weights stripped. */
 async function downloadPackage(packageName, message) {
   const packageRoot = path.join(FRAMEWORKS_DIR, packageName)
   const packageDir = path.join(packageRoot, 'ios')
@@ -138,10 +178,14 @@ async function downloadPackage(packageName, message) {
   execFileSync('unzip', ['-o', '-q', zipPath, '-d', packageDir], { stdio: 'pipe' })
   fs.unlinkSync(zipPath)
 
+  const freed = stripBundledWeights(packageName, packageDir)
+
   fs.writeFileSync(
     stampPath(packageName),
     JSON.stringify({ channel: SDK_CHANNEL, version: SDK_VERSION, etag })
   )
+
+  return freed
 }
 
 /** Fetch every framework that is missing or out of date. Resolves to an exit code. */
@@ -150,6 +194,18 @@ async function fetchFrameworks() {
 
   const upToDate = await Promise.all(PACKAGES.map(isUpToDate))
   const stale = PACKAGES.filter((_, index) => !upToDate[index])
+
+  // A framework that landed before the app fetched its own weights still has them
+  // sitting inside it, and its stamp is current so nothing would re-download it.
+  // Sweep those here; the stale ones are stripped as they extract.
+  const swept = PACKAGES.filter((_, index) => upToDate[index]).reduce(
+    (total, packageName) =>
+      total + stripBundledWeights(packageName, path.join(FRAMEWORKS_DIR, packageName, 'ios')),
+    0
+  )
+  if (swept > 0) {
+    log.info(`Dropped ${megabytes(swept)} of weights the app fetches at runtime`)
+  }
 
   if (stale.length === 0) {
     log.warn(`Frameworks already up to date (${SDK_VERSION}, ${SDK_CHANNEL})`)
@@ -172,13 +228,16 @@ async function fetchFrameworks() {
       return {
         title: `${packageName} ${progress}`,
         task: async (message) => {
+          let freed = 0
           try {
-            await downloadPackage(packageName, (msg) => message(`${msg} ${progress}`))
+            freed = await downloadPackage(packageName, (msg) => message(`${msg} ${progress}`))
           } catch (err) {
             failures.push(packageName)
             return `Failed to download ${packageName}: ${err.message}`
           }
-          return `Downloaded ${packageName} ${progress}`
+          return freed
+            ? `Downloaded ${packageName} ${progress} — dropped ${megabytes(freed)} of weights the app fetches at runtime`
+            : `Downloaded ${packageName} ${progress}`
         },
       }
     })

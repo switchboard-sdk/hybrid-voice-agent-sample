@@ -37,8 +37,11 @@ type Listener = (payload: unknown) => void
  */
 const EXTENSIONS = { Onnx: {}, Silero: {}, Whisper: {}, Sherpa: {}, LlamaCpp: {} }
 
-// Empty: the node loads the model bundled in its framework. A bare filename
-// would not resolve and would silently load nothing.
+// Empty means there is no on-device model on the phone: the weights are fetched
+// on first launch (see `src/model`) and stripped out of the framework, so nothing
+// is bundled to fall back on. Without a path the LLM node is left out of the graph
+// altogether and generate() says so, rather than the node loading nothing and
+// abandoning every turn in silence.
 const DEFAULT_LLM_MODEL = ''
 
 const GENERATE_TIMEOUT_MS = 60_000
@@ -224,6 +227,12 @@ class VoiceEngine {
     if (!text.trim()) {
       throw this.makeError('EMPTY_PROMPT', 'Prompt text cannot be empty')
     }
+    if (!this.config.llmModelPath) {
+      throw this.makeError(
+        'MODEL_NOT_AVAILABLE',
+        'There is no on-device model on this phone, so the graph has no language-model node.'
+      )
+    }
     if (!this.engineId) {
       this.createEngine()
     }
@@ -349,7 +358,9 @@ class VoiceEngine {
     if (instructions !== undefined) {
       this.config.llmInstructions = instructions
     }
-    if (!this.engineId) {
+    // No node to write to without a model, and the instructions are kept above so
+    // a later graph is built with them.
+    if (!this.engineId || !this.config.llmModelPath) {
       return
     }
     this.cancelGeneration()
@@ -527,20 +538,27 @@ class VoiceEngine {
             },
             { id: 'ttsNode', type: 'Sherpa.TTS' },
             { id: 'monoToMultiChannelNode', type: 'MonoToMultiChannel' },
-            // No audio in or out — driven entirely through actions and events.
-            {
-              id: 'llmNode',
-              type: 'LlamaCpp.LLM',
-              config: {
-                initializeModel: true,
-                contextSize: this.config.llmContextSize,
-                temperature: this.config.llmTemperature,
-                ...(this.config.llmMaxTokens > 0 && { maxTokens: this.config.llmMaxTokens }),
-                ...(this.config.llmSeed !== null && { seed: this.config.llmSeed }),
-                ...(this.config.llmModelPath && { modelPath: this.config.llmModelPath }),
-                ...(this.config.llmInstructions && { prompt: this.config.llmInstructions }),
-              },
-            },
+            // No audio in or out — driven entirely through actions and events. Left
+            // out when there is no model on the phone: the node would construct,
+            // fail to load anything, and then abandon every turn without a word.
+            // Speech in and out is unaffected, so the cloud brain still works.
+            ...(this.config.llmModelPath
+              ? [
+                  {
+                    id: 'llmNode',
+                    type: 'LlamaCpp.LLM',
+                    config: {
+                      initializeModel: true,
+                      modelPath: this.config.llmModelPath,
+                      contextSize: this.config.llmContextSize,
+                      temperature: this.config.llmTemperature,
+                      ...(this.config.llmMaxTokens > 0 && { maxTokens: this.config.llmMaxTokens }),
+                      ...(this.config.llmSeed !== null && { seed: this.config.llmSeed }),
+                      ...(this.config.llmInstructions && { prompt: this.config.llmInstructions }),
+                    },
+                  },
+                ]
+              : []),
           ],
           connections: [
             { sourceNode: 'inputNode', destinationNode: 'multiChannelToMonoNode' },

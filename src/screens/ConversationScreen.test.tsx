@@ -34,10 +34,10 @@ function fireNativeEvent(eventName: string, data?: unknown): void {
   ;(eventListeners[eventName] ?? []).forEach((cb) => cb(data))
 }
 
-const renderScreen = () =>
+const renderScreen = (modelReady = true) =>
   render(
     <EdgeSpeechProvider appId="test-id" appSecret="test-secret">
-      <ConversationScreen />
+      <ConversationScreen modelReady={modelReady} />
     </EdgeSpeechProvider>
   )
 
@@ -513,6 +513,38 @@ describe('ConversationScreen', () => {
       // The pick was kept through the outage, so it answers again without a tap.
       await waitFor(() => expect(screen.getByText('From the cloud.')).toBeTruthy())
       expect(screen.getByText(/Switch any time/)).toBeTruthy()
+    })
+  })
+
+  describe('without the model on the phone', () => {
+    it('takes the on-device brain away and says the cloud is answering', () => {
+      renderScreen(false)
+
+      expect(screen.getByText('On-device')).toBeDisabled()
+      expect(screen.getByText(/No model on this phone/)).toBeTruthy()
+    })
+
+    it('answers from the cloud even though on-device is the default pick', async () => {
+      renderScreen(false)
+      await startTalking()
+
+      await say('Any flights tomorrow?')
+
+      await waitFor(() => expect(cloudBrain.reply).toHaveBeenCalled())
+      expect(onDeviceBrain.reply).not.toHaveBeenCalled()
+    })
+
+    it('stays quiet about going offline, having nothing left to answer with', async () => {
+      // The notice promises an answer on this phone, and without the model there
+      // is no brain left to keep that promise.
+      renderScreen(false)
+      await startTalking()
+
+      await act(async () => {
+        network.setNetworkState({ isConnected: false, isInternetReachable: false })
+      })
+
+      expect(voiceEngine.speak).not.toHaveBeenCalledWith(OFFLINE_NOTICE)
     })
   })
 

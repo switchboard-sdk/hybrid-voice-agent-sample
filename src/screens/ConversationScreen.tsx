@@ -10,7 +10,14 @@ import {
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 
-import { brains, route, type Brain, type BrainId, type ConversationMessage } from '../brains'
+import {
+  brains,
+  canAnswer,
+  route,
+  type Brain,
+  type BrainId,
+  type ConversationMessage,
+} from '../brains'
 import { OFFLINE_NOTICE, useOnline } from '../connectivity'
 import { describeError, isCancelled, type ErrorDescription } from '../errors'
 import { useEdgeSpeech, type VoiceState } from '../voice'
@@ -67,11 +74,27 @@ function formatDuration(ms: number): string {
   return `${ms} ms`
 }
 
+/** The one line under the picker: what is narrowing the choice, or that nothing is. */
+function pickerHint(online: boolean, modelReady: boolean): string {
+  if (!modelReady) {
+    return 'No model on this phone — answering from the cloud.'
+  }
+  if (!online) {
+    return 'No connection — answering on this phone.'
+  }
+  return 'Switch any time — both brains read the same conversation.'
+}
+
 const EXAMPLE_PROMPTS = [
   'How do I get from the airport to the harbour?',
   'My flight was cancelled — what are my options?',
   'What is worth seeing here in two days?',
 ]
+
+export interface ConversationScreenProps {
+  /** Whether the model's weights are on the phone — see `src/model`. */
+  modelReady: boolean
+}
 
 /**
  * The demo screen: a travel agent you talk to.
@@ -80,7 +103,7 @@ const EXAMPLE_PROMPTS = [
  * are annotations kept alongside it by index, since both brains read the transcript
  * and neither produced a message about itself.
  */
-export function ConversationScreen(): React.JSX.Element {
+export function ConversationScreen({ modelReady }: ConversationScreenProps): React.JSX.Element {
   const {
     transcript,
     onTranscriptComplete,
@@ -116,14 +139,14 @@ export function ConversationScreen(): React.JSX.Element {
 
   const online = useOnline()
   // The brain the user picked, and the one that will answer. They differ only when
-  // there is no connection and the pick needs one.
-  const picked = route(preferred, true)
-  const brain = route(preferred, online)
+  // the pick needs a connection there is not.
+  const picked = route(preferred, { online: true, modelReady })
+  const brain = route(preferred, { online, modelReady })
   // What the banner offers when a brain fails: no connection is when the on-device
-  // path earns its place, and a model that will not load is when the cloud does.
-  // Nothing is offered while offline — there is no second brain to offer.
+  // path earns its place, and a missing model is when the cloud does. Nothing is
+  // offered when only one brain can answer at all.
   const otherBrain = brains.find(
-    (candidate) => candidate.id !== brain.id && (online || !candidate.requiresNetwork)
+    (candidate) => candidate.id !== brain.id && canAnswer(candidate, { online, modelReady })
   )
   const activity = activityOf(voiceState, thinking)
   const chatScrollRef = useRef<ScrollView>(null)
@@ -262,7 +285,9 @@ export function ConversationScreen(): React.JSX.Element {
   useEffect(() => {
     const wasOnline = wasOnlineRef.current
     wasOnlineRef.current = online
-    if (online || !wasOnline || !sessionActive || !picked.requiresNetwork) {
+    // Nothing to announce when the pick never needed the network, and nothing to
+    // promise without the model: going offline then leaves no brain that can answer.
+    if (online || !wasOnline || !sessionActive || !picked.requiresNetwork || !modelReady) {
       return
     }
 
@@ -288,7 +313,7 @@ export function ConversationScreen(): React.JSX.Element {
     if (unanswered) {
       handleConversationResponse(unanswered.text, unanswered.history)
     }
-  }, [online, sessionActive, picked, speak, clearError, handleConversationResponse])
+  }, [online, sessionActive, picked, modelReady, speak, clearError, handleConversationResponse])
 
   // The engine returns to 'listening' itself after TTS. This is the backstop for the
   // paths that land on 'idle' instead, so the conversation continues without a tap.
@@ -399,8 +424,9 @@ export function ConversationScreen(): React.JSX.Element {
           <View style={styles.empty}>
             <Text style={styles.emptyTitle}>Ask about your trip</Text>
             <Text style={styles.emptyBody}>
-              The agent can answer on the phone itself, so it keeps working where there is no
-              signal. Ask it something like:
+              {modelReady
+                ? 'The agent can answer on the phone itself, so it keeps working where there is no signal. Ask it something like:'
+                : 'The model is not on this phone, so replies come from the cloud for now. Ask it something like:'}
             </Text>
             {EXAMPLE_PROMPTS.map((prompt) => (
               <Text key={prompt} style={styles.emptyPrompt}>
@@ -482,9 +508,10 @@ export function ConversationScreen(): React.JSX.Element {
         <View style={styles.brainPicker}>
           {brains.map((candidate) => {
             // The brain that will answer, not the one that was picked: no connection
-            // withdraws the cloud and the picker has to say so.
+            // withdraws the cloud, no model withdraws the other, and the picker has
+            // to say so either way.
             const selected = candidate.id === brain.id
-            const unavailable = !online && candidate.requiresNetwork
+            const unavailable = !canAnswer(candidate, { online, modelReady })
             return (
               <TouchableOpacity
                 key={candidate.id}
@@ -502,11 +529,7 @@ export function ConversationScreen(): React.JSX.Element {
             )
           })}
         </View>
-        <Text style={styles.brainPickerHint}>
-          {online
-            ? 'Switch any time — both brains read the same conversation.'
-            : 'No connection — answering on this phone.'}
-        </Text>
+        <Text style={styles.brainPickerHint}>{pickerHint(online, modelReady)}</Text>
 
         <TouchableOpacity
           style={[styles.talkButton, sessionActive && styles.talkButtonActive]}
