@@ -55,7 +55,7 @@ The install script also honours a few build-time variables:
 | Variable                  | Effect                                                            |
 | ------------------------- | ----------------------------------------------------------------- |
 | `SWITCHBOARD_SDK_CHANNEL` | Bucket path to pull from. Defaults to `develop`.                  |
-| `SWITCHBOARD_SDK_VERSION` | SDK version in the archive names. Defaults to `3.2.5`.            |
+| `SWITCHBOARD_SDK_VERSION` | SDK version in the archive names. Defaults to `3.2.6`.            |
 | `SKIP_FRAMEWORK_DOWNLOAD` | Skip the download entirely. Used by CI's lint/typecheck/test job. |
 
 ## The language model
