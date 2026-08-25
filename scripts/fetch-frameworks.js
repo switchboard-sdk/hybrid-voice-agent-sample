@@ -6,13 +6,13 @@
  * No model weights live in git — they arrive here, packaged inside the
  * frameworks, from the public Switchboard bucket. Roughly 2.3 GB in total.
  *
- * The language model's weights are dropped again straight after extraction: the
- * app fetches them on first launch instead, so they must not reach the build. See
- * `src/model` for the other half of that.
+ * Assets the app never reads are dropped straight after extraction, so they cannot
+ * reach the build. See STRIPPED_ASSETS for what goes and why.
  *
  * Environment:
  *   SWITCHBOARD_SDK_CHANNEL   bucket path to pull from (default: develop)
  *   SWITCHBOARD_SDK_VERSION   SDK version in the archive names (default: 3.2.6)
+ *   SWITCHBOARD_KEEP_ASSETS   keep everything the packages ship
  */
 
 const fs = require('fs')
@@ -45,12 +45,25 @@ const PACKAGES = [
 ]
 
 /**
- * Weights to delete after extracting a package, per package. The LLM extension
- * ships its GGUF inside each slice of its xcframework and CocoaPods embeds the
- * framework whole, so leaving it here is what put a gigabyte in the built app.
- * `src/model` downloads it to the phone on first launch instead.
+ * Assets to delete after extracting a package, per package. CocoaPods embeds a
+ * vendored framework whole, so anything left here ends up in the app whether the
+ * graph touches it or not.
+ *
+ * The LLM's GGUF is fetched to the phone on first launch instead — see `src/model`.
+ * Sherpa ships a complete ASR stack alongside its TTS voices, and this app
+ * transcribes with `Whisper.STT`: `HLG.fst` and the CTC model are read only by
+ * `SherpaSTTNode`, and `de_DE` is a voice nothing selects. Between them those are
+ * most of the built app.
+ *
+ * Set SWITCHBOARD_KEEP_ASSETS to keep the lot, which is what switching the graph to
+ * `Sherpa.STT` or the German voice needs.
  */
-const STRIPPED_WEIGHTS = { SwitchboardLLM: /\.gguf$/ }
+const STRIPPED_ASSETS = {
+  SwitchboardLLM: [/\.gguf$/],
+  SwitchboardSherpa: [/\/files\/HLG\.fst$/, /\/files\/ctc-epoch-[^/]*\.ort$/, /\/files\/de_DE\//],
+}
+
+const KEEP_ASSETS = Boolean(process.env.SWITCHBOARD_KEEP_ASSETS)
 
 const ATTEMPTS = 3
 
@@ -131,15 +144,15 @@ function* files(dir) {
   }
 }
 
-/** Drop the weights the app downloads at runtime. Returns the bytes freed. */
-function stripBundledWeights(packageName, packageDir) {
-  const pattern = STRIPPED_WEIGHTS[packageName]
-  if (!pattern || !fs.existsSync(packageDir)) {
+/** Drop the assets this app never reads. Returns the bytes freed. */
+function stripUnusedAssets(packageName, packageDir) {
+  const patterns = STRIPPED_ASSETS[packageName]
+  if (KEEP_ASSETS || !patterns || !fs.existsSync(packageDir)) {
     return 0
   }
   let freed = 0
   for (const file of files(packageDir)) {
-    if (!pattern.test(file)) {
+    if (!patterns.some((pattern) => pattern.test(file))) {
       continue
     }
     freed += fs.statSync(file).size
@@ -150,7 +163,7 @@ function stripBundledWeights(packageName, packageDir) {
 
 const megabytes = (bytes) => `${(bytes / 1024 / 1024).toFixed(0)} MB`
 
-/** Fetch and extract one package. Resolves to the bytes of weights stripped. */
+/** Fetch and extract one package. Resolves to the bytes of assets stripped. */
 async function downloadPackage(packageName, message) {
   const packageRoot = path.join(FRAMEWORKS_DIR, packageName)
   const packageDir = path.join(packageRoot, 'ios')
@@ -179,7 +192,7 @@ async function downloadPackage(packageName, message) {
   execFileSync('unzip', ['-o', '-q', zipPath, '-d', packageDir], { stdio: 'pipe' })
   fs.unlinkSync(zipPath)
 
-  const freed = stripBundledWeights(packageName, packageDir)
+  const freed = stripUnusedAssets(packageName, packageDir)
 
   fs.writeFileSync(
     stampPath(packageName),
@@ -196,16 +209,16 @@ async function fetchFrameworks() {
   const upToDate = await Promise.all(PACKAGES.map(isUpToDate))
   const stale = PACKAGES.filter((_, index) => !upToDate[index])
 
-  // A framework that landed before the app fetched its own weights still has them
-  // sitting inside it, and its stamp is current so nothing would re-download it.
-  // Sweep those here; the stale ones are stripped as they extract.
+  // A framework whose stamp is current is never re-downloaded, so anything this list
+  // has grown to cover since it landed is still sitting inside it. Sweep those here;
+  // the stale ones are stripped as they extract.
   const swept = PACKAGES.filter((_, index) => upToDate[index]).reduce(
     (total, packageName) =>
-      total + stripBundledWeights(packageName, path.join(FRAMEWORKS_DIR, packageName, 'ios')),
+      total + stripUnusedAssets(packageName, path.join(FRAMEWORKS_DIR, packageName, 'ios')),
     0
   )
   if (swept > 0) {
-    log.info(`Dropped ${megabytes(swept)} of weights the app fetches at runtime`)
+    log.info(`Dropped ${megabytes(swept)} the app does not use`)
   }
 
   if (stale.length === 0) {
@@ -237,7 +250,7 @@ async function fetchFrameworks() {
             return `Failed to download ${packageName}: ${err.message}`
           }
           return freed
-            ? `Downloaded ${packageName} ${progress} — dropped ${megabytes(freed)} of weights the app fetches at runtime`
+            ? `Downloaded ${packageName} ${progress} — dropped ${megabytes(freed)} the app does not use`
             : `Downloaded ${packageName} ${progress}`
         },
       }

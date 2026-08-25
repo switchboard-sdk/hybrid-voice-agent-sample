@@ -52,21 +52,29 @@ build up on its own.
 
 The install script also honours a few build-time variables:
 
-| Variable                  | Effect                                                            |
-| ------------------------- | ----------------------------------------------------------------- |
-| `SWITCHBOARD_SDK_CHANNEL` | Bucket path to pull from. Defaults to `develop`.                  |
-| `SWITCHBOARD_SDK_VERSION` | SDK version in the archive names. Defaults to `3.2.6`.            |
-| `SKIP_FRAMEWORK_DOWNLOAD` | Skip the download entirely. Used by CI's lint/typecheck/test job. |
+| Variable                  | Effect                                                                    |
+| ------------------------- | ------------------------------------------------------------------------- |
+| `SWITCHBOARD_SDK_CHANNEL` | Bucket path to pull from. Defaults to `develop`.                          |
+| `SWITCHBOARD_SDK_VERSION` | SDK version in the archive names. Defaults to `3.2.6`.                    |
+| `SKIP_FRAMEWORK_DOWNLOAD` | Skip the download entirely. Used by CI's lint/typecheck/test job.         |
+| `SWITCHBOARD_KEEP_ASSETS` | Keep every asset the packages ship, instead of stripping the unused ones. |
 
 ## The language model
 
 The language model is downloaded by the app on first launch, not shipped inside it.
 
 The LLM extension does ship a Llama 3.2 1B GGUF inside its xcframework, and
-CocoaPods embeds a vendored framework whole — so leaving it there put 773 MB in
+CocoaPods embeds a vendored framework whole — so leaving it there puts 773 MB in
 the built app and a gigabyte-and-a-half install in front of anyone cloning this
 repo. `scripts/fetch-frameworks.js` deletes it straight after extracting, and
 `src/model` fetches it to the phone instead.
+
+It does the same to three assets Sherpa ships that this app never reads, listed in
+`STRIPPED_ASSETS`. `HLG.fst` and the CTC model belong to `SherpaSTTNode`, and
+transcription here is `Whisper.STT`; `de_DE` is a voice nothing selects, since
+`ttsVoice` is `en_GB`. That is 471 MB, and it is what takes the built app from
+856 MB to around 385 MB. Set `SWITCHBOARD_KEEP_ASSETS` to keep them, which is what
+pointing the graph at `Sherpa.STT` or the German voice needs.
 
 The first launch shows a screen offering the download and saying what it costs.
 It is not started automatically: 773 MB is not something to spend on someone's
@@ -86,9 +94,9 @@ thinking moves. The on-device brain is then withdrawn — `route` drops it and t
 picker dims it, the same way losing the connection withdraws the cloud. Getting
 the model afterwards means relaunching.
 
-| Variable                    | Effect                                                                                               |
-| --------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `EXPO_PUBLIC_LLM_MODEL_URL` | Where to fetch the model from. Defaults to a public mirror of the same build the SDK used to bundle. |
+| Variable                    | Effect                                                                                                   |
+| --------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `EXPO_PUBLIC_LLM_MODEL_URL` | Where to fetch the model from. Defaults to a public mirror of the build the SDK's LLM extension carries. |
 
 Overriding the URL also stands the size check down, since another GGUF will not
 weigh what this one does — a short file is then only caught by the total the

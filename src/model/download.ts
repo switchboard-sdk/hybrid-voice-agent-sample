@@ -19,8 +19,8 @@ import { createDownloadResumable } from 'expo-file-system/legacy'
 const MODEL_FILE = 'Llama-3.2-1B-Instruct-Q4_0.gguf'
 
 /**
- * Where the model comes from. The default is a public mirror of the same build
- * the SDK used to bundle, byte for byte.
+ * Where the model comes from. The default is a public mirror of the build the SDK's
+ * LLM extension carries, byte for byte.
  */
 const DEFAULT_MODEL_URL =
   'https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_0.gguf'
