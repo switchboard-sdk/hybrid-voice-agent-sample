@@ -76,6 +76,10 @@ function formatDuration(ms: number): string {
 
 /** The one line under the picker: what is narrowing the choice, or that nothing is. */
 function pickerHint(online: boolean, modelReady: boolean): string {
+  // Both missing first: either message alone would name a brain that cannot answer.
+  if (!modelReady && !online) {
+    return 'No model on this phone and no connection — neither brain can answer.'
+  }
   if (!modelReady) {
     return 'No model on this phone — answering from the cloud.'
   }
@@ -358,8 +362,10 @@ export function ConversationScreen({ modelReady }: ConversationScreenProps): Rea
     clearError()
   }
 
-  const clearConversation = () => {
+  const clearConversation = async () => {
     turnRef.current?.controller.abort()
+    // The reply still being read out belongs to the conversation being cleared.
+    await stopSpeaking()
     historyRef.current = []
     setConversationHistory([])
     setInterrupted(new Set())
