@@ -1,7 +1,7 @@
 /**
- * The one place that turns an error `code` into a sentence for the user. Both
- * layers tag their errors — `makeError` in `VoiceEngine`, `brainError` in
- * `src/brains/types.ts`.
+ * The one place that turns an error `code` into a sentence for the user. Every
+ * layer tags its errors — `makeError` in `VoiceEngine`, `brainError` in
+ * `src/brains/types.ts`, `modelError` in `src/model/download.ts`.
  *
  * An unknown code keeps its own message rather than becoming a generic apology.
  * An action only appears where one exists: Settings for a denied microphone, the
@@ -81,6 +81,29 @@ const MESSAGES: Record<string, ErrorDescription> = {
   },
   NOT_INITIALIZED: {
     message: 'The Switchboard SDK has not started yet.',
+  },
+
+  // MARK: - The model's weights
+  //
+  // Fetched on first launch rather than shipped in the app, so a fresh install
+  // has a failure the second one cannot have. Each of these keeps its own
+  // sentence rather than the underlying NSURLSession text, which is not written
+  // for whoever is holding the phone.
+
+  MODEL_DOWNLOAD_FAILED: {
+    message: 'The model could not be downloaded. Check the connection and try again.',
+  },
+  MODEL_INCOMPLETE: {
+    message: 'Only part of the model arrived. Try the download again.',
+  },
+  MODEL_NO_SPACE: {
+    message: 'There is not enough free space on this phone for the model.',
+  },
+  // The cloud is the way out, offered as an action — but not claimed in the
+  // sentence, since a phone with no model and no connection has neither brain.
+  MODEL_NOT_AVAILABLE: {
+    message: 'The on-device model is not on this phone.',
+    action: 'switch-brain',
   },
 
   // MARK: - The cloud model

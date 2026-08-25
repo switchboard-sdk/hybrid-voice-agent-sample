@@ -10,8 +10,7 @@ Built with the [Switchboard SDK](https://switchboard.audio). The on-device voice
 pipeline comes from [EdgeSpeech](https://github.com/switchboard-sdk/EdgeSpeech).
 
 > **Status: early.** The on-device speech pipeline runs, both brains sit behind one
-> interface, and you can switch between them mid-conversation. The model is bundled
-> rather than downloaded on first launch.
+> interface, and you can switch between them mid-conversation.
 
 ## Requirements
 
@@ -19,7 +18,8 @@ pipeline comes from [EdgeSpeech](https://github.com/switchboard-sdk/EdgeSpeech).
 - Node.js 22+
 - A real iPhone — the on-device models need one, and Whisper's Metal path does
   not run in the Simulator
-- Around 3 GB of free disk space for the frameworks
+- Around 3 GB of free disk space for the frameworks, and around 800 MB free on
+  the phone for the language model
 
 ## Setup
 
@@ -39,8 +39,9 @@ ID and secret there before running — register at
 them.
 
 No model weights are committed here. Install fetches the SDK and extension
-frameworks — which carry the speech and language models — from the public
-Switchboard bucket into `modules/edgespeech-native/ios/Frameworks/`.
+frameworks — which carry the speech models — from the public Switchboard bucket
+into `modules/edgespeech-native/ios/Frameworks/`. The language model is not among
+them: see [The language model](#the-language-model) below.
 
 The fetch itself lives in `scripts/fetch-frameworks.js`, which `postinstall`
 delegates to and you can run on its own with `npm run frameworks`. Each framework
@@ -57,10 +58,46 @@ The install script also honours a few build-time variables:
 | `SWITCHBOARD_SDK_VERSION` | SDK version in the archive names. Defaults to `3.2.5`.            |
 | `SKIP_FRAMEWORK_DOWNLOAD` | Skip the download entirely. Used by CI's lint/typecheck/test job. |
 
+## The language model
+
+The language model is downloaded by the app on first launch, not shipped inside it.
+
+The LLM extension does ship a Llama 3.2 1B GGUF inside its xcframework, and
+CocoaPods embeds a vendored framework whole — so leaving it there put 773 MB in
+the built app and a gigabyte-and-a-half install in front of anyone cloning this
+repo. `scripts/fetch-frameworks.js` deletes it straight after extracting, and
+`src/model` fetches it to the phone instead.
+
+The first launch shows a screen offering the download and saying what it costs.
+It is not started automatically: 773 MB is not something to spend on someone's
+data plan without asking. The fetch runs on a background `URLSession`, so it
+survives the app being put away and keeps retrying through a connection that
+comes and goes. The file lands in Documents, and every launch after that goes
+straight to the conversation with no connection needed.
+
+Two things it does not do. The app being killed mid-download loses the partial
+file, so the next launch starts again. And the model sits in Documents, which iOS
+includes in the device's backup — `expo-file-system` has no way to mark a file as
+excluded, and Documents is the only directory the system will not evict.
+
+Whoever does not want to wait can take **Use the cloud brain instead** and carry
+on: speech recognition and synthesis are in the app either way, so only the
+thinking moves. The on-device brain is then withdrawn — `route` drops it and the
+picker dims it, the same way losing the connection withdraws the cloud. Getting
+the model afterwards means relaunching.
+
+| Variable                    | Effect                                                                                               |
+| --------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `EXPO_PUBLIC_LLM_MODEL_URL` | Where to fetch the model from. Defaults to a public mirror of the same build the SDK used to bundle. |
+
+Overriding the URL also stands the size check down, since another GGUF will not
+weigh what this one does — a short file is then only caught by the total the
+server declares.
+
 ## Layout
 
 ```
-App.tsx                     providers + screen
+App.tsx                     credentials, then the model, then the conversation
 index.ts                    Expo entry point
 src/
   voice/                    the on-device pipeline
@@ -73,8 +110,13 @@ src/
     OnDeviceBrain.ts        the LlamaCpp.LLM node
     CloudBrain.ts           a cloud LLM over HTTP
     router.ts               which brain answers — the file to change
+  model/                    the language model's weights
+    download.ts             finding it on the phone, and fetching it if it is not
+    hook.ts                 useModel()
   screens/                  UI
     ConversationScreen.tsx  the whole app: transcript, state, per-turn badges
+    ModelDownloadScreen.tsx the first launch: the download, or a way past it
+    SetupScreen.tsx         what a clone with no credentials sees
   connectivity.ts           whether there is a connection, and the spoken notice
 modules/edgespeech-native/  the only native code: a C++ TurboModule + podspec
 scripts/postinstall.js      framework download

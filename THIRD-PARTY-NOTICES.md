@@ -3,9 +3,11 @@
 This app is MIT licensed (see [LICENSE](LICENSE)). It builds on the work below.
 
 No model weights are stored in this repository. The Switchboard SDK frameworks —
-which carry the speech and language models — are downloaded at install time by
-`scripts/postinstall.js` from the public Switchboard bucket. The obligations
-listed here attach to the built app and to those frameworks.
+which carry the speech models — are downloaded at install time by
+`scripts/postinstall.js` from the public Switchboard bucket. The language model is
+downloaded by the app itself on first launch, from the URL in
+`src/model/download.ts`. The obligations listed here attach to the built app, to
+those frameworks, and to the model the app fetches.
 
 ## Source absorbed into this repository
 
@@ -17,7 +19,7 @@ The on-device voice pipeline in `src/voice/` and the native TurboModule in
 Synervoz Communications Inc., used under the MIT licence. The demo screen in
 `src/screens/ConversationScreen.tsx` is derived from its example app.
 
-## Models and libraries shipped inside the frameworks
+## Models and libraries the app depends on
 
 | Component                     | Licence                     | Obligation                                                                                          |
 | ----------------------------- | --------------------------- | --------------------------------------------------------------------------------------------------- |
@@ -34,6 +36,12 @@ Synervoz Communications Inc., used under the MIT licence. The demo screen in
 This app uses Meta's Llama 3.2 1B Instruct model, licensed under the
 [Llama 3.2 Community License](https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE).
 Any model you derive from it must carry a name prefixed with "Llama".
+
+The weights are fetched at runtime rather than shipped, which changes nothing
+about the obligation: the built app still displays "Built with Llama" and carries
+this notice. Anyone serving the weights from their own host — see
+`EXPO_PUBLIC_LLM_MODEL_URL` — takes on the licence's redistribution terms for that
+copy.
 
 ### Share-alike on the text-to-speech voice
 

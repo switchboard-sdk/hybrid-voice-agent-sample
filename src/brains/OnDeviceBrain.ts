@@ -93,6 +93,7 @@ export class OnDeviceBrain implements Brain {
   readonly id: BrainId = 'on-device'
   readonly label = 'On-device'
   readonly requiresNetwork = false
+  readonly requiresModel = true
 
   /** How many messages of the app transcript the node has ingested. */
   private syncedMessages = 0
