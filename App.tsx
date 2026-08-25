@@ -55,6 +55,10 @@ function VoiceAgent(): React.JSX.Element {
       // Below the pipeline's 0.8: the prompt's rules only hold if sampling follows
       // them.
       llmTemperature={0.4}
+      // The same ceiling CloudBrain puts on a cloud reply, so neither path can run
+      // away. A backstop rather than a brevity control: it stops wherever the count
+      // runs out and OnDeviceBrain trims the fragment. Rule 1 is what asks for short.
+      llmMaxTokens={200}
       // Undefined leaves the language-model node out of the graph entirely.
       llmModelPath={model.path ?? undefined}
       llmInstructions={DEFAULT_SYSTEM_PROMPT}>

@@ -161,11 +161,13 @@ in one sentence rather than two rules, a general ban on invented specifics rathe
 than a list of examples to slip between, and no describing a named place, since the
 prompt's own examples of who to ask are otherwise nouns to invent facts about.
 
-Length is prompt-only on the on-device path. `CloudBrain` caps a reply at 200
-tokens; the `LlamaCpp.LLM` node takes `instructions`, `temperature`, `contextSize`
-and `seed` and has no equivalent, so the wording is what keeps a reply speakable.
-The temperature is also lower than the pipeline's default, in `App.tsx`: rules only
-hold if the sampling is conservative enough to follow them.
+Length is capped at 200 tokens on both paths — `max_completion_tokens` on the cloud
+request, and `maxTokens` on the node, which it gained in SDK 3.2.6. Neither is a
+brevity control: the ceiling stops a reply wherever the count runs out, usually mid
+sentence, and `OnDeviceBrain` trims the fragment back to the last full stop. Rule 1
+is what asks for short; the ceiling only stops a runaway. The temperature is also
+lower than the pipeline's default, in `App.tsx`: rules only hold if the sampling is
+conservative enough to follow them.
 
 ### What the prompt does not fix
 
