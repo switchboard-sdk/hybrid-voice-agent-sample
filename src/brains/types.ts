@@ -73,10 +73,8 @@ export interface Brain {
  * because one about lookups does not cover them. Rule 7 can still lose to a direct
  * request in the user's turn; `flattenMultilineReply` in `OnDeviceBrain` cannot.
  *
- * Rule 5 was a bare prohibition and was the one the model broke most, describing
- * named places it had never seen. It now redirects like rules 2 and 3 do, and
- * carries the worked example they have — the only rule without one was the one
- * being ignored.
+ * Every do-not-invent rule refuses and redirects in the same sentence and carries a
+ * worked example; a bare prohibition does not hold at this size.
  */
 export const DEFAULT_SYSTEM_PROMPT = [
   'You are the voice of a travel assistant app. The traveller speaks to you and hears your reply read aloud.',
