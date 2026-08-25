@@ -12,7 +12,7 @@
  *
  * Environment:
  *   SWITCHBOARD_SDK_CHANNEL   bucket path to pull from (default: develop)
- *   SWITCHBOARD_SDK_VERSION   SDK version in the archive names (default: 3.2.5)
+ *   SWITCHBOARD_SDK_VERSION   SDK version in the archive names (default: 3.2.6)
  */
 
 const fs = require('fs')
@@ -22,15 +22,16 @@ const { Readable } = require('stream')
 const { execFileSync } = require('child_process')
 const { intro, outro, log, tasks } = require('@clack/prompts')
 
-// `develop` carries the LLM context-eviction fix (SWI-6775); pin to
-// `release/x.y.z` once that ships, and this becomes release-only.
+// `develop` carries the LLM node's cancel action (SWI-6818) and reply ceiling
+// (SWI-6826), neither of which is in a release yet; pin to `release/x.y.z` once
+// they ship, and this becomes release-only.
 const SDK_CHANNEL = process.env.SWITCHBOARD_SDK_CHANNEL ?? 'develop'
-const SDK_VERSION = process.env.SWITCHBOARD_SDK_VERSION ?? '3.2.5'
+const SDK_VERSION = process.env.SWITCHBOARD_SDK_VERSION ?? '3.2.6'
 
 const BUCKET_URL = 'https://switchboard-sdk-public.s3.us-east-1.amazonaws.com'
 
 // Archives are <package>-<platform>-<version>.zip; the version is the SDK
-// version, so `develop` serves *-ios-3.2.5.zip until it rolls to the next.
+// version, so `develop` serves *-ios-3.2.6.zip until it rolls to the next.
 const objectUrl = (packageName) =>
   `${BUCKET_URL}/builds/${SDK_CHANNEL}/ios/${packageName}-ios-${SDK_VERSION}.zip`
 
