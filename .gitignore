@@ -24,6 +24,9 @@ modules/*/ios/Frameworks/
 # Credentials
 .env
 
+# App Store Connect API key ID and issuer, read by scripts/testflight.js
+.env.appstore
+
 # Local Xcode node path override
 .xcode.env.local
 

@@ -11,6 +11,7 @@
     "prebuild": "expo prebuild --platform ios --clean",
     "postinstall": "node scripts/postinstall.js",
     "frameworks": "node scripts/fetch-frameworks.js",
+    "testflight": "node scripts/testflight.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "check": "tsc --noEmit",
