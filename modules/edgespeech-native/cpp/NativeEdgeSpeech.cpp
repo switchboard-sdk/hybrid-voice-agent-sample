@@ -22,8 +22,8 @@ NativeEdgeSpeech::NativeEdgeSpeech(std::shared_ptr<CallInvoker> jsInvoker)
   switchboard::extensions::silerovad::SileroVADExtension::load();
   switchboard::extensions::whisper::WhisperExtension::load();
   switchboard::extensions::sherpa::SherpaExtension::load();
-  // The on-device language model. Loaded (node factory registered) here; the
-  // graph node and conversation wiring land in SWI-6786.
+  // The on-device language model. This registers the node factory; the graph that
+  // instantiates `LlamaCpp.LLM` is built in TypeScript, in src/voice/VoiceEngine.ts.
   switchboard::extensions::llm::LLMExtension::load();
 
   // Forward every SDK event to JS via the codegen-generated emitter.
