@@ -490,6 +490,9 @@ class VoiceEngine {
     const pending = this.pendingGeneration
     if (pending) {
       clearTimeout(pending.timer)
+      if (pending.firstTokenTimer) {
+        clearTimeout(pending.firstTokenTimer)
+      }
       this.pendingGeneration = null
       pending.reject(
         this.makeError('ENGINE_STOPPED', 'The audio engine was torn down while generating')
@@ -651,6 +654,12 @@ class VoiceEngine {
       const text = (this.extractText(e) ?? '').trim()
       const processingTime = Number(e?.data?.processingTime ?? 0)
       const pending = this.pendingGeneration
+      if (!pending) {
+        // A reply for a turn nobody is waiting on: the cancel lost the race, so the
+        // node kept a reply this app never showed and its context is a turn ahead of
+        // the transcript. OnDeviceBrain's counter cannot see that from its side.
+        console.warn('[LLM] a reply arrived for an abandoned turn — the node context has drifted')
+      }
       this.settleGeneration()
       pending?.resolve({ text, processingTime })
       this.emit('onLLMResponse', { text, processingTime })

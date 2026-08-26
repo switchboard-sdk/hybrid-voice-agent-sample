@@ -546,6 +546,16 @@ describe('ConversationScreen', () => {
 
       expect(voiceEngine.speak).not.toHaveBeenCalledWith(OFFLINE_NOTICE)
     })
+
+    it('promises neither brain when there is no connection either', async () => {
+      renderScreen(false)
+
+      await act(async () => {
+        network.setNetworkState({ isConnected: false, isInternetReachable: false })
+      })
+
+      expect(screen.getByText(/neither brain can answer/)).toBeTruthy()
+    })
   })
 
   describe('clearing', () => {
@@ -563,6 +573,19 @@ describe('ConversationScreen', () => {
       expect(screen.getByText('Ask about your trip')).toBeTruthy()
       expect(onDeviceBrain.reset).toHaveBeenCalled()
       expect(cloudBrain.reset).toHaveBeenCalled()
+    })
+
+    it('stops a reply that is still being read out', async () => {
+      renderScreen()
+      await startTalking()
+      await say('How do I get to the harbour?')
+      await waitFor(() => expect(screen.getByText('On the device.')).toBeTruthy())
+
+      await act(async () => {
+        fireEvent.press(screen.getByText('Clear'))
+      })
+
+      expect(voiceEngine.stopSpeaking).toHaveBeenCalled()
     })
   })
 })
