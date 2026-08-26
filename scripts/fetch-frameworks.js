@@ -13,6 +13,7 @@
  *   SWITCHBOARD_SDK_CHANNEL   bucket path to pull from (default: develop)
  *   SWITCHBOARD_SDK_VERSION   SDK version in the archive names (default: 3.2.6)
  *   SWITCHBOARD_KEEP_ASSETS   keep everything the packages ship
+ *   SWITCHBOARD_UPDATE_LOCK   record what was fetched in frameworks.lock.json
  */
 
 const fs = require('fs')
@@ -22,9 +23,9 @@ const { Readable } = require('stream')
 const { execFileSync } = require('child_process')
 const { intro, outro, log, tasks } = require('@clack/prompts')
 
-// `develop` carries the LLM node's cancel action (SWI-6818) and reply ceiling
-// (SWI-6826), neither of which is in a release yet; pin to `release/x.y.z` once
-// they ship, and this becomes release-only.
+// The app needs the LLM node's cancel action and reply ceiling, which `develop`
+// carries and no release does yet. Set this to `release/x.y.z` once one ships:
+// `develop` is a moving channel, so it is not what a sample should default to.
 const SDK_CHANNEL = process.env.SWITCHBOARD_SDK_CHANNEL ?? 'develop'
 const SDK_VERSION = process.env.SWITCHBOARD_SDK_VERSION ?? '3.2.6'
 
@@ -64,6 +65,7 @@ const STRIPPED_ASSETS = {
 }
 
 const KEEP_ASSETS = Boolean(process.env.SWITCHBOARD_KEEP_ASSETS)
+const UPDATE_LOCK = Boolean(process.env.SWITCHBOARD_UPDATE_LOCK)
 
 const ATTEMPTS = 3
 
@@ -97,14 +99,65 @@ async function remoteETag(packageName) {
   }
 }
 
-async function isUpToDate(packageName) {
+function isUpToDate(packageName, etag) {
   const stamp = readStamp(packageName)
   if (!stamp || stamp.channel !== SDK_CHANNEL || stamp.version !== SDK_VERSION) {
     return false
   }
-  const etag = await remoteETag(packageName)
   // Unreachable bucket: trust what's on disk rather than wiping a good install.
   return etag === null || etag === stamp.etag
+}
+
+/**
+ * The ETags this commit was tested against, per package.
+ *
+ * The stamps live beside the frameworks, which are not in git, so they say nothing
+ * to a fresh clone. This does: `develop` can rebuild a version in place, and
+ * without a record of which bytes were tested, a clone would quietly get a
+ * different SDK than the code was written for.
+ */
+const LOCK_PATH = path.join(PROJECT_ROOT, 'frameworks.lock.json')
+
+function readLock() {
+  try {
+    return JSON.parse(fs.readFileSync(LOCK_PATH, 'utf8'))
+  } catch {
+    return null
+  }
+}
+
+function writeLock() {
+  const packages = Object.fromEntries(PACKAGES.map((name) => [name, readStamp(name)?.etag ?? null]))
+  fs.writeFileSync(
+    LOCK_PATH,
+    `${JSON.stringify({ channel: SDK_CHANNEL, version: SDK_VERSION, packages }, null, 2)}\n`
+  )
+}
+
+/**
+ * Say so when the bucket no longer serves what the lock records. A warning rather
+ * than a stop: a sample nobody can install is worse than one carrying an SDK it
+ * was not tested against, so long as it says which it is.
+ */
+function verifyLock(etags) {
+  const lock = readLock()
+  if (!lock || lock.channel !== SDK_CHANNEL || lock.version !== SDK_VERSION) {
+    return
+  }
+
+  const moved = PACKAGES.filter(
+    (name) => etags[name] && lock.packages?.[name] && etags[name] !== lock.packages[name]
+  )
+  if (moved.length === 0) {
+    return
+  }
+
+  log.warn(
+    `${SDK_CHANNEL} has rebuilt ${SDK_VERSION} since this commit was pinned: ${moved.join(', ')}.\n` +
+      'You are getting a different SDK than this code was tested against. Run\n' +
+      '`SWITCHBOARD_UPDATE_LOCK=1 npm run frameworks` to take the new build and refresh\n' +
+      'frameworks.lock.json, or set SWITCHBOARD_SDK_CHANNEL to a release.'
+  )
 }
 
 async function fetchToFile(packageName, zipPath, message) {
@@ -206,7 +259,13 @@ async function downloadPackage(packageName, message) {
 async function fetchFrameworks() {
   intro(`Switchboard SDK ${SDK_VERSION} (${SDK_CHANNEL})`)
 
-  const upToDate = await Promise.all(PACKAGES.map(isUpToDate))
+  // One HEAD per package, serving both the up-to-date check and the lock check.
+  const etagList = await Promise.all(PACKAGES.map(remoteETag))
+  const etags = Object.fromEntries(PACKAGES.map((name, index) => [name, etagList[index]]))
+
+  verifyLock(etags)
+
+  const upToDate = PACKAGES.map((name) => isUpToDate(name, etags[name]))
   const stale = PACKAGES.filter((_, index) => !upToDate[index])
 
   // A framework whose stamp is current is never re-downloaded, so anything this list
@@ -223,6 +282,10 @@ async function fetchFrameworks() {
 
   if (stale.length === 0) {
     log.warn(`Frameworks already up to date (${SDK_VERSION}, ${SDK_CHANNEL})`)
+    if (UPDATE_LOCK) {
+      writeLock()
+      log.info('Refreshed frameworks.lock.json')
+    }
     outro('Frameworks ready')
     return 0
   }
@@ -262,6 +325,11 @@ async function fetchFrameworks() {
       `Incomplete — ${failures.join(', ')} failed. Re-run \`npm run frameworks\` to fetch just those.`
     )
     return 1
+  }
+
+  if (UPDATE_LOCK) {
+    writeLock()
+    log.info('Refreshed frameworks.lock.json')
   }
 
   outro('Frameworks ready')

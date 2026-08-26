@@ -48,8 +48,7 @@ copy.
 The en_GB VITS voice is licensed CC-BY-SA 4.0. Share-alike attaches to the voice
 model itself, and **anyone forking this repository inherits that obligation**.
 Shipping it unmodified alongside MIT app code is fine; redistributing a modified
-voice model means releasing it under CC-BY-SA 4.0 as well. A later change swaps
-in an Apache-licensed voice.
+voice model means releasing it under CC-BY-SA 4.0 as well.
 
 ### Full licence texts
 

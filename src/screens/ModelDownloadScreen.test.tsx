@@ -34,6 +34,17 @@ beforeEach(() => {
 })
 
 describe('ModelDownloadScreen', () => {
+  // Meta's licence obligation, not a nicety, so it is held to every state the
+  // screen can be in rather than just the one it opens on.
+  it.each<ModelStatus>(['checking', 'missing', 'downloading', 'failed'])(
+    'attributes Llama while %s',
+    (status) => {
+      renderScreen(download(status))
+
+      expect(screen.getByText('Built with Llama')).toBeTruthy()
+    }
+  )
+
   it('says what the download costs before asking for it', () => {
     renderScreen(download('missing'))
 

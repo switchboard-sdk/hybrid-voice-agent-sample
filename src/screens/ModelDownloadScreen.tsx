@@ -42,6 +42,10 @@ export function ModelDownloadScreen({
           {status === 'downloading' ? 'Downloading the model' : 'Get the on-device model'}
         </Text>
 
+        {/* Meta's Llama 3.2 licence asks for this wherever the model is used. This is
+            the screen the model arrives on, so it belongs here. */}
+        <Text style={styles.attribution}>Built with Llama</Text>
+
         {status === 'checking' && <Text style={styles.body}>Looking for the model…</Text>}
 
         {status !== 'checking' && status !== 'downloading' && (
@@ -118,6 +122,12 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 22,
     color: '#444',
+  },
+  attribution: {
+    fontSize: 13,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+    color: '#555',
   },
   track: {
     height: 8,

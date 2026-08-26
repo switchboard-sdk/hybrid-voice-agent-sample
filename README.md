@@ -46,9 +46,18 @@ them: see [The language model](#the-language-model) below.
 The fetch itself lives in `scripts/fetch-frameworks.js`, which `postinstall`
 delegates to and you can run on its own with `npm run frameworks`. Each framework
 is stamped with the bucket object's ETag once it lands, so a re-run fetches only
-what is missing or has changed. That matters while we track `develop`, which is a
-moving channel: when the release pipeline rebuilds it, a re-run picks the new
-build up on its own.
+what is missing or has changed.
+
+**The default channel is `develop`, a pre-release one.** The app needs the LLM
+node's cancel action and its reply ceiling, and no release carries them yet — so
+this is not a preference, and it does mean the frameworks can change under a fixed
+version. `frameworks.lock.json` records the ETags this commit was tested against;
+the stamps cannot, since the frameworks are not in git. When the bucket no longer
+serves what the lock says, the fetch prints which packages moved and carries on
+rather than stopping — an uninstallable sample is worse than one that tells you
+what it is running. `SWITCHBOARD_UPDATE_LOCK=1 npm run frameworks` takes the new
+build and refreshes the lock. Pointing `SWITCHBOARD_SDK_CHANNEL` at a release once
+one carries those two features is the real fix.
 
 The install script also honours a few build-time variables:
 
@@ -58,8 +67,15 @@ The install script also honours a few build-time variables:
 | `SWITCHBOARD_SDK_VERSION` | SDK version in the archive names. Defaults to `3.2.6`.                    |
 | `SKIP_FRAMEWORK_DOWNLOAD` | Skip the download entirely. Used by CI's lint/typecheck/test job.         |
 | `SWITCHBOARD_KEEP_ASSETS` | Keep every asset the packages ship, instead of stripping the unused ones. |
+| `SWITCHBOARD_UPDATE_LOCK` | Record what was fetched in `frameworks.lock.json`.                        |
 
 ## The language model
+
+**Built with Llama.** The on-device model is Meta's Llama 3.2 1B Instruct, used
+under the [Llama 3.2 Community License](https://github.com/meta-llama/llama-models/blob/main/models/llama3_2/LICENSE),
+which asks for that notice wherever it is used. The download screen carries it too.
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) has the full obligation, along
+with the share-alike terms on the text-to-speech voice.
 
 The language model is downloaded by the app on first launch, not shipped inside it.
 
@@ -128,6 +144,7 @@ src/
   connectivity.ts           whether there is a connection, and the spoken notice
 modules/edgespeech-native/  the only native code: a C++ TurboModule + podspec
 app.config.js               layers the signing team from .env onto app.json
+frameworks.lock.json        the SDK builds this commit was tested against
 scripts/postinstall.js      framework download
 scripts/testflight.js       archive, export and upload a build
 ```

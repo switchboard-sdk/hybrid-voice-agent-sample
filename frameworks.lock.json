@@ -1,0 +1,12 @@
+{
+  "channel": "develop",
+  "version": "3.2.6",
+  "packages": {
+    "SwitchboardSDK": "\"ce86c4764d104b6e9d44d95b33d7e01a\"",
+    "SwitchboardOnnx": "\"30ec373591e3329ad5dfc9ceb7cee9b0-5\"",
+    "SwitchboardSileroVAD": "\"ae0cc8204a804e40b2c161deecaa42cf\"",
+    "SwitchboardWhisper": "\"153b196756c57ecdc8746077ff728f41-67\"",
+    "SwitchboardSherpa": "\"eababab631cfdd2a0696201bb074f085-98\"",
+    "SwitchboardLLM": "\"99bb88f23d9d034677929e304e495a39-284\""
+  }
+}
