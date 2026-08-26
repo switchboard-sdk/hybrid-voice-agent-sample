@@ -49,9 +49,9 @@ export interface Brain {
   /**
    * Reply to `transcript`, given the conversation up to but excluding it.
    *
-   * Rejects with a `CANCELLED` error if `signal` fires. Cancellation means the
-   * reply is abandoned, not necessarily that the work stops: the on-device node
-   * has no cancel action, so its generation runs to completion unheard.
+   * Rejects with a `CANCELLED` error if `signal` fires. Both paths stop the work
+   * too: the cloud request is aborted, and the on-device node stops within a token
+   * and drops the reply it was building.
    */
   reply(
     transcript: string,

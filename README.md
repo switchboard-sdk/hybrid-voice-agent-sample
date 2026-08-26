@@ -12,6 +12,45 @@ pipeline comes from [EdgeSpeech](https://github.com/switchboard-sdk/EdgeSpeech).
 > **Status: early.** The on-device speech pipeline runs, both brains sit behind one
 > interface, and you can switch between them mid-conversation.
 
+## Architecture
+
+Everything but the cloud brain runs on the phone. Speech recognition and synthesis
+are on the device whichever brain answers, so the only thing that ever crosses the
+network is the thinking — and only when you ask it to.
+
+```mermaid
+flowchart LR
+  subgraph phone["On the phone"]
+    direction LR
+    mic(["Mic"]) --> vad["Silero VAD"]
+    vad -- "speechEnded" --> stt["Whisper STT"]
+    stt --> router{"route()"}
+    router -- "on-device" --> llm["LlamaCpp.LLM node<br/>Llama 3.2 1B"]
+    llm --> tts["Sherpa TTS"]
+    tts --> spk(["Speaker"])
+  end
+  subgraph net["Off the phone"]
+    chat["Switchboard /chat"]
+  end
+  router -- "cloud" --> chat --> tts
+  classDef ondevice fill:#e0f2f1,stroke:#00796b,stroke-width:2px,color:#004d40
+  classDef cloudy fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#0d47a1
+  class llm ondevice
+  class chat cloudy
+  style phone fill:#fafafa,stroke:#bdbdbd,color:#424242
+  style net fill:#f5faff,stroke:#90caf9,color:#0d47a1
+```
+
+Both brains are handed the same transcript on every turn and neither keeps its own,
+which is what lets the switch happen mid-conversation rather than starting over.
+
+`route()` in [`src/brains/router.ts`](src/brains/router.ts) is the seam: the only
+file in the app that names an implementation, and so the only one a fork has to
+change. [Swapping the brain](#swapping-the-brain) is what to do there,
+[The two brains](#the-two-brains) is the interface a new one implements, and
+[Conversation history](#conversation-history) is how the on-device node's own
+context is kept in step with that transcript.
+
 ## Requirements
 
 - macOS with Xcode 16 or newer
@@ -142,10 +181,12 @@ src/
     ModelDownloadScreen.tsx the first launch: the download, or a way past it
     SetupScreen.tsx         what a clone with no credentials sees
   connectivity.ts           whether there is a connection, and the spoken notice
+  errors.ts                 the only place a failure code becomes a sentence
 modules/edgespeech-native/  the only native code: a C++ TurboModule + podspec
 app.config.js               layers the signing team from .env onto app.json
 frameworks.lock.json        the SDK builds this commit was tested against
-scripts/postinstall.js      framework download
+scripts/fetch-frameworks.js the framework download, and the asset stripping
+scripts/postinstall.js      runs the fetch after npm install
 scripts/testflight.js       archive, export and upload a build
 ```
 
@@ -153,6 +194,32 @@ The native layer is deliberately tiny: one JSON-RPC string channel plus an event
 stream. The entire audio graph — voice activity detection, transcription,
 synthesis, barge-in — is authored in TypeScript above it, so changing the
 pipeline never means touching native code.
+
+```mermaid
+flowchart TB
+  ui["<b>src/screens</b> · ConversationScreen"]
+  brains["<b>src/brains</b> · Brain, route(), the two brains"]
+  engine["<b>src/voice</b> · VoiceEngine — graph and state machine"]
+  rpc["<b>src/voice</b> · SwitchboardClient — typed JSON-RPC"]
+  native["<b>modules/edgespeech-native</b> · C++ TurboModule"]
+  sdk["<b>Switchboard SDK</b> · vendored xcframeworks"]
+  chat["Switchboard /chat"]
+  ui --> brains
+  ui --> engine
+  brains --> engine
+  engine --> rpc --> native --> sdk
+  sdk -. "events" .-> engine
+  brains -. "fetch" .-> chat
+  classDef nat fill:#fff3e0,stroke:#ef6c00,stroke-width:2px,color:#7c3a00
+  classDef cloudy fill:#e3f2fd,stroke:#1565c0,stroke-width:2px,color:#0d47a1
+  class native,sdk nat
+  class chat cloudy
+```
+
+`modules/edgespeech-native` and the vendored SDK are the only native pieces, and
+only the first is code in this repo. The cloud brain touches neither: it is a
+`fetch` and nothing more, which is why it still answers on a phone that has no
+model on it.
 
 ## The screen
 
