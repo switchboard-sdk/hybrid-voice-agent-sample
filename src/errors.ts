@@ -108,9 +108,17 @@ const MESSAGES: Record<string, ErrorDescription> = {
 
   // MARK: - The cloud model
 
-  CLOUD_NO_API_KEY: {
+  CLOUD_NO_CREDENTIALS: {
     message:
-      'No cloud API key. Set EXPO_PUBLIC_CLOUD_LLM_API_KEY in .env, or use the on-device brain.',
+      'No Switchboard credentials. Set EXPO_PUBLIC_SWITCHBOARD_APP_ID and EXPO_PUBLIC_SWITCHBOARD_APP_SECRET in .env, or use the on-device brain.',
+    action: 'switch-brain',
+  },
+  // The endpoint reads the provider key from the app record, so this is a
+  // console setting rather than anything in the app — see "Cloud credentials"
+  // in the README.
+  CLOUD_NOT_CONFIGURED: {
+    message:
+      'This app has no cloud model configured. Add an OpenAI key to it in the Switchboard console.',
     action: 'switch-brain',
   },
   CLOUD_UNREACHABLE: {
@@ -130,7 +138,7 @@ const MESSAGES: Record<string, ErrorDescription> = {
 function describeHttpStatus(status: number): ErrorDescription {
   if (status === 401 || status === 403) {
     return {
-      message: 'The cloud model rejected the API key.',
+      message: 'The cloud endpoint rejected this app’s credentials.',
       action: 'switch-brain',
     }
   }

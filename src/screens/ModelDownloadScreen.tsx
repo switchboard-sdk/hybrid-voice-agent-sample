@@ -97,7 +97,7 @@ export function ModelDownloadScreen({
 
         <Text style={styles.footnote}>
           Speech recognition and synthesis are already in the app, so the cloud brain only moves
-          where the thinking happens. It needs an API key in .env, and a connection for every reply.
+          where the thinking happens. It needs a connection for every reply.
         </Text>
       </ScrollView>
     </SafeAreaView>

@@ -46,10 +46,16 @@ describe('describeError', () => {
     expect(action).toBe('switch-brain')
   })
 
-  it('keeps the API-key message that already says what to do', () => {
-    expect(describeError(brainError('CLOUD_NO_API_KEY', 'whatever')).message).toContain(
-      'EXPO_PUBLIC_CLOUD_LLM_API_KEY'
+  it('keeps the credentials message that already says what to do', () => {
+    expect(describeError(brainError('CLOUD_NO_CREDENTIALS', 'whatever')).message).toContain(
+      'EXPO_PUBLIC_SWITCHBOARD_APP_ID'
     )
+  })
+
+  it('sends an app with no provider key to the console rather than to .env', () => {
+    const { message, action } = describeError(brainError('CLOUD_NOT_CONFIGURED', 'not configured'))
+    expect(message).toContain('console')
+    expect(action).toBe('switch-brain')
   })
 
   it('says a spoken reply survived in the transcript', () => {
@@ -60,9 +66,7 @@ describe('describeError', () => {
 
   describe('cloud HTTP statuses', () => {
     it('separates a rejected key from a rate limit from an outage', () => {
-      expect(describeError(brainError('CLOUD_HTTP_401', '')).message).toContain(
-        'rejected the API key'
-      )
+      expect(describeError(brainError('CLOUD_HTTP_401', '')).message).toContain('rejected this app')
       expect(describeError(brainError('CLOUD_HTTP_429', '')).message).toContain('rate limited')
       expect(describeError(brainError('CLOUD_HTTP_503', '')).message).toContain('having trouble')
     })
