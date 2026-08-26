@@ -188,8 +188,8 @@ in one sentence rather than two rules, a general ban on invented specifics rathe
 than a list of examples to slip between, and no describing a named place, since the
 prompt's own examples of who to ask are otherwise nouns to invent facts about.
 
-Length is capped at 200 tokens on both paths — `max_completion_tokens` on the cloud
-request, and `maxTokens` on the node, which it gained in SDK 3.2.6. Neither is a
+Length is capped at 200 tokens on both paths — the chat endpoint applies its own
+ceiling, and `maxTokens` on the node, which it gained in SDK 3.2.6. Neither is a
 brevity control: the ceiling stops a reply wherever the count runs out, usually mid
 sentence, and `OnDeviceBrain` trims the fragment back to the last full stop. Rule 1
 is what asks for short; the ceiling only stops a runaway. The temperature is also
@@ -252,13 +252,16 @@ It also drops a trailing half-sentence. A reply can be cut off rather than finis
 sentence read aloud sounds like a fault rather than a short answer. A reply that
 never reached a sentence end is kept whole: a fragment still beats saying nothing.
 
-`CloudBrain` calls OpenAI's chat completions API, which takes the transcript as it
-is — the roles the app already tracks are the roles the model expects. On top of
-that it handles what a network needs: a 15-second timeout, one retry on a timeout,
-a dropped connection, a 429 or a 5xx, and prompt cancellation when the user
-interrupts. The provider-specific parts are `buildRequest`, `parseReply` and
-`parseError` at the top of `CloudBrain.ts` — those three functions and two
-constants are the whole of what changes to point it somewhere else.
+`CloudBrain` posts to Switchboard's chat endpoint, which takes the transcript as it
+is — the roles the app already tracks are the roles it expects — and answers with
+text alone, never naming the model behind it. On top of that it handles what a
+network needs: a 15-second timeout, one retry on a timeout, a dropped connection or
+a 5xx, and prompt cancellation when the user interrupts. A rate limit is the
+exception it does not retry, for the reason in
+[Cloud credentials](#cloud-credentials). The endpoint-specific parts are
+`buildRequest`, `parseReply` and `parseError` at the top of `CloudBrain.ts` — those
+three functions and two constants are the whole of what changes to point it
+somewhere else.
 
 The transcript holds only what was actually said. An interruption is recorded
 against the reply it cut off rather than added as a turn of its own — a message
@@ -298,23 +301,41 @@ reasons in [Conversation history](#conversation-history).
 
 ### Cloud credentials
 
-The cloud brain needs an [OpenAI API key](https://platform.openai.com/api-keys) in
-`EXPO_PUBLIC_CLOUD_LLM_API_KEY`. Two optional companions:
-`EXPO_PUBLIC_CLOUD_LLM_MODEL` (defaults to `gpt-4o-mini`) and
-`EXPO_PUBLIC_CLOUD_LLM_BASE_URL`. The on-device brain needs none of them, and runs
-with no account at all — selecting the cloud brain without a key fails with a
-message saying exactly that.
+There are none to add to `.env`. The cloud brain does not call a provider
+directly: it posts to Switchboard's `/chat`, which authenticates with the same app
+ID and secret that start the SDK and keeps the provider key on the server. No
+credential worth stealing is compiled into the bundle — which matters because
+`EXPO_PUBLIC_` variables can be extracted from any build that ships — and a clone
+that can run the app at all can run both brains.
 
-`EXPO_PUBLIC_` variables are compiled into the JS bundle by Expo, exactly like the
-Switchboard credentials above. **A key put there is not a secret: it can be
-extracted from any build that ships.** That is fine for a key of your own on your
-own device. It is not fine for a shared or billable key, and not fine for anything
-distributed — including TestFlight.
+What does have to be set is a provider key on the app record, which lives in the
+console rather than in this repo. Open your app in
+[console.switchboard.audio](https://console.switchboard.audio/), find
+**Configuration**, and add an OpenAI key to the JSON already shown there:
 
-For those, put a proxy you control between the app and the provider, keep the key
-server-side, and point `EXPO_PUBLIC_CLOUD_LLM_BASE_URL` at the proxy. Nothing in
-the app changes: it already sends the same chat-completions request, and the key it
-sends is then whatever the proxy expects rather than the real one.
+```json
+{ "openAi": { "apiKey": "sk-proj-…" } }
+```
+
+The editor replaces the whole config, so merge rather than paste over it. The same
+key serves the Realtime client-secret routes, so an app already set up for those
+needs nothing further. Until it is saved, a cloud turn fails with _"This app has no
+cloud model configured"_ and the on-device brain carries on regardless.
+
+The endpoint decides the rest, and none of it is per-request: which model answers,
+a 200-token ceiling, and the last 12 messages of whatever is sent. `CloudBrain`
+trims the transcript to fit inside that window rather than letting the system
+prompt be the message that falls off the front. Replies are buffered, so there is
+no cloud equivalent of the on-device token stream.
+
+It is also rate limited to five requests per 30 seconds per app — a demo turn is a
+single request — and a refused turn still counts against the window. So a 429 is
+not retried: `CloudBrain` reports how long to wait and offers the on-device brain,
+which is the way past it.
+
+| Variable                         | Effect                                                                         |
+| -------------------------------- | ------------------------------------------------------------------------------ |
+| `EXPO_PUBLIC_CLOUD_LLM_BASE_URL` | Where the cloud brain posts. Defaults to `https://api.switchboard.audio/chat`. |
 
 ## Going offline
 

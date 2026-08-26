@@ -4,19 +4,25 @@ import { DEFAULT_SYSTEM_PROMPT, type ConversationMessage } from './types'
 const user = (content: string): ConversationMessage => ({ role: 'user', content })
 const assistant = (content: string): ConversationMessage => ({ role: 'assistant', content })
 
-/** A chat completion, shaped the way the API returns one. */
-const ok = (content: string): Response =>
+/** A completion, shaped the way the endpoint returns one. */
+const ok = (text: string): Response =>
   ({
     ok: true,
     status: 200,
-    json: () => Promise.resolve({ choices: [{ message: { role: 'assistant', content } }] }),
+    json: () =>
+      Promise.resolve({
+        success: true,
+        message: 'Success',
+        data: { text, model: 'gpt-4o-mini-2024-07-18' },
+      }),
   }) as unknown as Response
 
-const httpError = (status: number, message?: string): Response =>
+const httpError = (status: number, message?: string, retryAfter?: string): Response =>
   ({
     ok: false,
     status,
-    json: () => Promise.resolve(message ? { error: { message } } : {}),
+    headers: { get: (name: string) => (name === 'Retry-After' ? (retryAfter ?? null) : null) },
+    json: () => Promise.resolve(message ? { success: false, message } : {}),
   }) as unknown as Response
 
 /** An abort, shaped the way fetch reports one. */
@@ -28,8 +34,9 @@ const aborted = (): Error => {
 
 const makeBrain = (fetchImpl: jest.Mock, config: CloudBrainConfig = {}) =>
   new CloudBrain({
-    baseUrl: 'https://example.test/chat/completions',
-    apiKey: 'sk-test',
+    baseUrl: 'https://example.test/chat',
+    appId: 'app-test',
+    appSecret: 'secret-test',
     fetchImpl,
     ...config,
   })
@@ -37,9 +44,6 @@ const makeBrain = (fetchImpl: jest.Mock, config: CloudBrainConfig = {}) =>
 /** The body of the nth fetch call, decoded. */
 const sentBody = (fetchImpl: jest.Mock, call = 0) =>
   JSON.parse(fetchImpl.mock.calls[call][1].body as string)
-
-const sentHeaders = (fetchImpl: jest.Mock, call = 0) =>
-  fetchImpl.mock.calls[call][1].headers as Record<string, string>
 
 describe('reply', () => {
   it('returns the reply, the brain that answered and a timing', async () => {
@@ -60,7 +64,7 @@ describe('reply', () => {
       assistant('booked'),
     ])
 
-    const { messages, model } = sentBody(fetchImpl)
+    const { messages } = sentBody(fetchImpl)
     expect(messages[0].role).toBe('system')
     expect(messages[0].content).toBe(DEFAULT_SYSTEM_PROMPT)
     expect(messages.slice(1)).toEqual([
@@ -68,49 +72,54 @@ describe('reply', () => {
       { role: 'assistant', content: 'booked' },
       { role: 'user', content: 'and after that?' },
     ])
-    expect(model).toBe('gpt-4o-mini')
   })
 
-  it('caps how much of the transcript it resends', async () => {
+  it('caps the transcript at what the endpoint forwards, so the persona survives', async () => {
     const fetchImpl = jest.fn(() => Promise.resolve(ok('a')))
     const long = Array.from({ length: 60 }, (_, i) => user(`turn ${i}`))
 
     await makeBrain(fetchImpl).reply('and now?', long)
 
     const { messages } = sentBody(fetchImpl)
-    // system + 40 kept + this turn, and it is the tail that is kept.
-    expect(messages).toHaveLength(42)
-    expect(messages[1].content).toBe('turn 20')
+    // system + 10 kept + this turn is the 12 the endpoint keeps, and it is the
+    // tail of the history that is kept.
+    expect(messages).toHaveLength(12)
+    expect(messages[1].content).toBe('turn 50')
   })
 
-  it('honours a model override', async () => {
+  it('authenticates in the body, and asks for nothing the closed schema rejects', async () => {
     const fetchImpl = jest.fn(() => Promise.resolve(ok('a')))
 
-    await makeBrain(fetchImpl, { model: 'gpt-4.1-mini' }).reply('hi', [])
+    await makeBrain(fetchImpl, { appId: 'app-abc', appSecret: 'secret-abc' }).reply('hi', [])
 
-    expect(sentBody(fetchImpl).model).toBe('gpt-4.1-mini')
+    const body = sentBody(fetchImpl)
+    expect(body.appId).toBe('app-abc')
+    expect(body.appSecret).toBe('secret-abc')
+    expect(Object.keys(body).sort()).toEqual(['appId', 'appSecret', 'messages'])
   })
 
-  it('sends the key as a bearer token', async () => {
-    const fetchImpl = jest.fn(() => Promise.resolve(ok('a')))
-
-    await makeBrain(fetchImpl, { apiKey: 'sk-abc' }).reply('hi', [])
-
-    expect(sentHeaders(fetchImpl).Authorization).toBe('Bearer sk-abc')
-  })
-
-  it('says so plainly when no key is configured, without calling out', async () => {
+  it('says so plainly when there are no credentials, without calling out', async () => {
     const fetchImpl = jest.fn(() => Promise.resolve(ok('a')))
     const brain = new CloudBrain({ fetchImpl })
 
-    await expect(brain.reply('hi', [])).rejects.toThrow(/EXPO_PUBLIC_CLOUD_LLM_API_KEY/)
+    await expect(brain.reply('hi', [])).rejects.toThrow(/EXPO_PUBLIC_SWITCHBOARD_APP_ID/)
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
-  it("surfaces the provider's own explanation of a failure", async () => {
-    const fetchImpl = jest.fn().mockResolvedValue(httpError(401, 'Incorrect API key provided'))
+  it("surfaces the endpoint's own explanation of a failure", async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(httpError(401, 'Invalid app credentials.'))
 
-    await expect(makeBrain(fetchImpl).reply('hi', [])).rejects.toThrow(/Incorrect API key/)
+    await expect(makeBrain(fetchImpl).reply('hi', [])).rejects.toThrow(/Invalid app credentials/)
+  })
+
+  it('tells an app with no provider key from any other bad request', async () => {
+    const fetchImpl = jest
+      .fn()
+      .mockResolvedValue(httpError(400, 'Chat is not configured for this application'))
+
+    await expect(makeBrain(fetchImpl).reply('hi', [])).rejects.toMatchObject({
+      code: 'CLOUD_NOT_CONFIGURED',
+    })
   })
 
   it('rejects an empty reply', async () => {
@@ -164,14 +173,15 @@ describe('retrying', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2)
   })
 
-  it('retries a rate limit', async () => {
-    const fetchImpl = jest.fn().mockResolvedValueOnce(httpError(429)).mockResolvedValueOnce(ok('a'))
+  it('does not retry a rate limit — the endpoint counts rejected requests too', async () => {
+    const fetchImpl = jest.fn().mockResolvedValue(httpError(429, 'Rate limit reached', '12'))
 
     const pending = makeBrain(fetchImpl).reply('hi', [])
+    pending.catch(() => {})
     await jest.advanceTimersByTimeAsync(1_000)
-    await pending
 
-    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    await expect(pending).rejects.toThrow(/retry in 12s/)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
   })
 
   it('does not retry another client error — a bad request will not fix itself', async () => {

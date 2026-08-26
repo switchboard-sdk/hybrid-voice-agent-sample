@@ -21,15 +21,15 @@ import type { Brain, BrainId } from './types'
 export const onDeviceBrain = new OnDeviceBrain()
 
 /**
- * The cloud LLM. The key is required and the other two fall back to sensible
- * defaults; selecting this brain without a key fails with a message saying so.
- * See the README on why an `EXPO_PUBLIC_` key is demo-grade and what to do
- * instead.
+ * The cloud LLM, reached through Switchboard's chat endpoint. It takes the same
+ * app ID and secret that start the SDK, so there is no second credential to set
+ * up and no provider key in the bundle. The URL falls back to production; point
+ * it elsewhere to run against staging or a proxy of your own.
  */
 export const cloudBrain = new CloudBrain({
-  apiKey: process.env.EXPO_PUBLIC_CLOUD_LLM_API_KEY || undefined,
+  appId: process.env.EXPO_PUBLIC_SWITCHBOARD_APP_ID || undefined,
+  appSecret: process.env.EXPO_PUBLIC_SWITCHBOARD_APP_SECRET || undefined,
   baseUrl: process.env.EXPO_PUBLIC_CLOUD_LLM_BASE_URL || undefined,
-  model: process.env.EXPO_PUBLIC_CLOUD_LLM_MODEL || undefined,
 })
 
 /** Every brain the app can route to, in the order the UI offers them. */
@@ -64,8 +64,8 @@ export function canAnswer(brain: Brain, availability: Availability): boolean {
  * Only these two things override the choice, because both are knowable before the
  * turn: the app says the offline one out loud when it happens (see
  * `src/connectivity.ts`) and puts the missing model in front of the conversation
- * (see `src/screens/ModelDownloadScreen.tsx`). A failure is different — picking
- * the cloud with no API key fails with a message saying so, which is more useful
+ * (see `src/screens/ModelDownloadScreen.tsx`). A failure is different — a cloud
+ * turn the endpoint refuses fails with a message saying why, which is more useful
  * than a silent fallback that looks like the cloud working.
  */
 export function route(preferred: BrainId, availability: Availability = FULLY_AVAILABLE): Brain {

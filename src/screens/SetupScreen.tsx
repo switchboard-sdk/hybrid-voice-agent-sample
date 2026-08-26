@@ -45,8 +45,9 @@ export function SetupScreen(): React.JSX.Element {
         </TouchableOpacity>
 
         <Text style={styles.footnote}>
-          The on-device brain needs nothing else — no account, no cloud key. A cloud API key is only
-          wanted if you intend to switch brains mid-conversation.
+          That is the whole of it. The on-device brain needs no account at all, and the cloud one
+          reaches its model through Switchboard with the same two values, so there is no provider
+          key to add here.
         </Text>
       </ScrollView>
     </SafeAreaView>
