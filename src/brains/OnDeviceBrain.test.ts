@@ -196,7 +196,8 @@ describe('reply', () => {
   })
 
   it('caps how much of the transcript a replay resends', async () => {
-    // An uncapped replay eventually cannot fit the context.
+    // A long background is read as the thing to answer, so the new message has to
+    // stay a large share of the prompt.
     const history = Array.from({ length: 60 }, (_, i) =>
       i % 2 === 0 ? user(`question ${i}`) : assistant(`answer ${i}`)
     )
@@ -205,7 +206,8 @@ describe('reply', () => {
 
     const prompt = jest.mocked(voiceEngine.generate).mock.calls[0][0]
     expect(prompt).not.toContain('question 0')
-    expect(prompt).toContain('question 58')
+    expect(prompt).not.toContain('question 48')
+    expect(prompt).toContain('question 50')
     expect(prompt).toContain('and now?')
   })
 
