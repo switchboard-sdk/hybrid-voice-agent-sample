@@ -1,6 +1,6 @@
 import { OnDeviceBrain } from './OnDeviceBrain'
 import { voiceEngine, type LLMReply } from '../voice/VoiceEngine'
-import type { ConversationMessage } from './types'
+import { ON_DEVICE_REFUSAL, type ConversationMessage } from './types'
 
 jest.mock('../voice/VoiceEngine', () => ({
   __esModule: true,
@@ -239,6 +239,108 @@ describe('reply', () => {
     // for it even though the first brain is in sync.
     await other.reply('and again', [user('hello'), assistant('reply')])
     expect(voiceEngine.resetConversation).toHaveBeenCalledTimes(1)
+  })
+})
+
+/**
+ * A canned refusal in the node's own context is the likeliest thing for it to write
+ * next, and two of them are enough to make it the answer to everything.
+ */
+describe('refusals', () => {
+  const refuses = () =>
+    jest
+      .mocked(voiceEngine.generate)
+      .mockResolvedValueOnce({ text: ON_DEVICE_REFUSAL, processingTime: 1 })
+
+  const lastPrompt = () => {
+    const calls = jest.mocked(voiceEngine.generate).mock.calls
+    return calls[calls.length - 1][0]
+  }
+
+  it('says it a different way each time rather than repeating one sentence', async () => {
+    refuses()
+    const first = await brain.reply('write me a poem', [])
+    refuses()
+    const second = await brain.reply('tell me a joke', [
+      user('write me a poem'),
+      assistant(first.text),
+    ])
+
+    expect(second.text).not.toBe(first.text)
+  })
+
+  it.each(['I can only help with travel.', 'i can only help with travel'])(
+    'rewords a refusal that is nothing but the canned sentence (%s)',
+    async (raw) => {
+      jest.mocked(voiceEngine.generate).mockResolvedValueOnce({ text: raw, processingTime: 1 })
+
+      const reply = await brain.reply('write me a poem', [])
+
+      expect(reply.text).toBe(ON_DEVICE_REFUSAL)
+    }
+  )
+
+  // The model's own redirect beats any canned sentence, so it is spoken as written
+  // — but it still goes nowhere near the replay.
+  it('keeps a refusal that carried its own redirect, and still scrubs it', async () => {
+    const ranOn =
+      "I can only help with travel. You'll need a sports website for the 1998 World Cup."
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({ text: ranOn, processingTime: 1 })
+
+    const reply = await brain.reply('who won the world cup?', [])
+    expect(reply.text).toBe(ranOn)
+
+    await brain.reply('where should I go?', [user('who won the world cup?'), assistant(ranOn)])
+
+    expect(voiceEngine.resetConversation).toHaveBeenCalled()
+    expect(lastPrompt()).toBe('where should I go?')
+  })
+
+  it('leaves a reply that only mentions travel help alone', async () => {
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({
+      text: 'I can only help with what you have told me, so where are you headed?',
+      processingTime: 1,
+    })
+
+    const reply = await brain.reply('hello', [])
+
+    expect(reply.text).toBe('I can only help with what you have told me, so where are you headed?')
+  })
+
+  it('rebuilds the node rather than leaving the refusal in its context', async () => {
+    refuses()
+    await brain.reply('write me a poem', [])
+
+    // In sync would have sent the new message alone; this replays instead.
+    await brain.reply('where should I go?', [user('write me a poem'), assistant('...')])
+
+    expect(voiceEngine.resetConversation).toHaveBeenCalled()
+  })
+
+  it('leaves the refused exchange out of what the node is replayed', async () => {
+    refuses()
+    const refusal = await brain.reply('write me a poem', [])
+
+    await brain.reply('where should I go?', [
+      user('is the harbour far?'),
+      assistant('I cannot check that offline.'),
+      user('write me a poem'),
+      assistant(refusal.text),
+    ])
+
+    const prompt = lastPrompt()
+    expect(prompt).toContain('Me: is the harbour far?')
+    expect(prompt).not.toContain('write me a poem')
+    expect(prompt).not.toContain(refusal.text)
+  })
+
+  it('replays nothing but the new message when every exchange was refused', async () => {
+    refuses()
+    const refusal = await brain.reply('write me a poem', [])
+
+    await brain.reply('where should I go?', [user('write me a poem'), assistant(refusal.text)])
+
+    expect(lastPrompt()).toBe('where should I go?')
   })
 })
 

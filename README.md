@@ -316,20 +316,23 @@ conservative enough to follow them.
 
 ### What the on-device prompt does not fix
 
-Two habits survive it.
+Two habits survive it, and neither shows up on the cloud path.
 
-The model sometimes **recites a rule instead of following it** — answering "I can
-only help with travel" to a travel question it cannot answer, or announcing that it
-can offer general guidance rather than offering any. Honest and useless. The refusal
-is scoped to requests to write or entertain, and the rule says in as many words that
-a travel question it cannot answer is not one of them, but a fixed sentence in a
-prompt is an attractive thing for a small model to reach for.
+The model **recites the refusal instead of answering**, and once it has done so twice
+it does little else — "Where should I go in Norway?" comes back as "I can only help
+with travel." A fixed sentence the model has just written is the likeliest thing for
+it to write next, and the rules are still reachable underneath: unrelated questions
+in the same run are answered correctly. Repetition simply beats them.
+
+Scoping what the rule catches does not touch this, so `OnDeviceBrain` does two
+things instead. A refusal is **said a different way** than the node wrote it, so the
+traveller does not hear one sentence twice; and it is **kept out of the replay**, so
+the node never reads it back. See [Conversation history](#conversation-history) for
+what the second costs.
 
 And a direct **"write me a poem" produces verse** whatever the prompt says: a
 request in the user's turn outranks a rule in the system prompt at this size. Hence
 the guard in `OnDeviceBrain` — the prompt asks, the code decides.
-
-Both are the model rather than the wording — neither shows up on the cloud path.
 
 ## The two brains
 
@@ -533,6 +536,15 @@ So the two are kept in step by tracking how many messages the node has ingested:
 That costs one re-prefill at the moment of a switch and nothing during a normal
 exchange. It is also what lets a switch keep context: both brains read and write
 the same transcript, so flipping mid-conversation continues rather than restarts.
+
+**One exception, and it is deliberate.** A replay leaves out any exchange the model
+refused — the refusal and the request that drew it — so the transcript on screen and
+the transcript the node reads are not quite the same. A refused turn also counts as
+a divergence, which is what forces the replay that drops it. So the node's own
+context holds a refusal for exactly one turn and never reads it back, at the price of
+one re-prefill each time. The screen keeps both, because the traveller heard both.
+[What the on-device prompt does not fix](#what-the-on-device-prompt-does-not-fix) is
+why this is worth an exception at all.
 
 ## TestFlight
 

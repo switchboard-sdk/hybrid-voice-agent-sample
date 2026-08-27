@@ -1,5 +1,6 @@
 import { voiceEngine, type LLMReply } from '../voice/VoiceEngine'
 import {
+  ON_DEVICE_REFUSAL,
   ON_DEVICE_SYSTEM_PROMPT,
   cancelledError,
   type Brain,
@@ -55,6 +56,78 @@ function flattenMultilineReply(text: string): string {
     : firstSentence
 }
 
+/**
+ * What a refusal is allowed to sound like. The prompt asks for the first of these
+ * word for word, because a 1B model cannot be relied on to phrase one itself — but
+ * a reply with one possible wording has no gradient, and a traveller who hears the
+ * same sentence twice reads it as a broken app rather than a boundary. So the node
+ * writes one and the app says the next in turn.
+ *
+ * Recognising them is also what keeps them out of the replay, which is the half
+ * that matters more: see {@link withoutRefusedExchanges}.
+ */
+const REFUSALS = [
+  ON_DEVICE_REFUSAL,
+  'Travel is the only thing I can help with, I am afraid.',
+  'That one is outside what I can do — travel is my subject.',
+  'I only handle travel questions.',
+] as const
+
+const forComparison = (text: string): string =>
+  text
+    .trim()
+    .toLowerCase()
+    .replace(/[.!]+$/, '')
+
+/**
+ * The opening of the refusal the prompt asks for, matched as a prefix so a reply
+ * that ran on — "I can only help with travel questions" — is still recognised.
+ * Missing one is silent: the wording would go back into the node's context and start
+ * the loop this exists to prevent.
+ */
+const REFUSAL_OPENING = forComparison(ON_DEVICE_REFUSAL)
+
+function isRefusal(text: string): boolean {
+  return forComparison(text).startsWith(REFUSAL_OPENING) || isBareRefusal(text)
+}
+
+/**
+ * A refusal and nothing else, which is the only kind worth rewording. The model
+ * often adds a redirect of its own — "…you'll need a sports website for that" —
+ * and that is a better reply than any canned sentence, so it is left to speak for
+ * itself. Both kinds are kept out of the replay just the same.
+ */
+function isBareRefusal(text: string): boolean {
+  const value = forComparison(text)
+  return REFUSALS.some((refusal) => forComparison(refusal) === value)
+}
+
+/**
+ * Leave a refused exchange out of what the node is replayed.
+ *
+ * A canned refusal in the node's own context is the likeliest thing for it to write
+ * next, and two of them are enough to make it the answer to everything — a travel
+ * question included. The transcript on screen keeps them, because the traveller
+ * heard them; the model does not read them back.
+ *
+ * The request that drew the refusal goes with it. It was off topic anyway, and a
+ * question left in the background with no answer under it is the one shape the
+ * replay is written to avoid.
+ */
+function withoutRefusedExchanges(history: ConversationMessage[]): ConversationMessage[] {
+  const kept: ConversationMessage[] = []
+  for (const message of history) {
+    if (message.role === 'assistant' && isRefusal(message.content)) {
+      if (kept[kept.length - 1]?.role === 'user') {
+        kept.pop()
+      }
+      continue
+    }
+    kept.push(message)
+  }
+  return kept
+}
+
 /** Sentence enders, in the order the model is likely to produce them. */
 const SENTENCE_END = /[.!?…]["')\]]?$/
 
@@ -98,6 +171,9 @@ export class OnDeviceBrain implements Brain {
   /** How many messages of the app transcript the node has ingested. */
   private syncedMessages = 0
 
+  /** How many refusals have been said, so the next one is worded differently. */
+  private refusalsSaid = 0
+
   /** Clear the node's conversation and set the system prompt. */
   reset(instructions: string = ON_DEVICE_SYSTEM_PROMPT): void {
     voiceEngine.resetConversation(instructions)
@@ -129,16 +205,29 @@ export class OnDeviceBrain implements Brain {
       reply.text
     )
 
+    const text = trimToCompleteSentence(flattenMultilineReply(stripRoleLabel(reply.text)))
+
     // The node holds every message up to and including its reply — unless it dropped
     // the turn as too long, when it holds neither and the next turn rebuilds it.
+    // A refusal forces the same rebuild, so the node never reads back the sentence
+    // it just wrote. That costs one re-prefill on the turn after a refusal and
+    // nothing otherwise.
     const droppedTheTurn = reply.text.trim() === INPUT_TOO_LONG_REPLY
-    this.syncedMessages = droppedTheTurn ? 0 : history.length + 2
+    const refused = isRefusal(text)
+    this.syncedMessages = droppedTheTurn || refused ? 0 : history.length + 2
 
     return {
-      text: trimToCompleteSentence(flattenMultilineReply(stripRoleLabel(reply.text))),
+      text: isBareRefusal(text) ? this.nextRefusal() : text,
       brain: this.id,
       processingTime,
     }
+  }
+
+  /** Say the refusal a different way each time it comes up. */
+  private nextRefusal(): string {
+    const refusal = REFUSALS[this.refusalsSaid % REFUSALS.length]
+    this.refusalsSaid += 1
+    return refusal
   }
 
   /**
@@ -182,10 +271,11 @@ export class OnDeviceBrain implements Brain {
    * instruction rather than another transcript line for it to continue.
    */
   private renderReplay(history: ConversationMessage[], transcript: string): string {
-    if (history.length === 0) {
+    const kept = withoutRefusedExchanges(history)
+    if (kept.length === 0) {
       return transcript
     }
-    const past = history
+    const past = kept
       .slice(-MAX_REPLAY_MESSAGES)
       .map((m) => `${m.role === 'user' ? 'Me' : 'You'}: ${m.content}`)
       .join('\n')
