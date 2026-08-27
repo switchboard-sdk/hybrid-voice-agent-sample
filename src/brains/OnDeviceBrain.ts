@@ -79,9 +79,20 @@ const forComparison = (text: string): string =>
     .toLowerCase()
     .replace(/[.!]+$/, '')
 
+/**
+ * The opening of the refusal the prompt asks for, matched as a prefix so a reply
+ * that ran on — "I can only help with travel questions" — is still recognised.
+ * Missing one is silent: the wording would go back into the node's context and start
+ * the loop this exists to prevent.
+ */
+const REFUSAL_OPENING = forComparison(ON_DEVICE_REFUSAL)
+
 function isRefusal(text: string): boolean {
   const value = forComparison(text)
-  return REFUSALS.some((refusal) => forComparison(refusal) === value)
+  return (
+    value.startsWith(REFUSAL_OPENING) ||
+    REFUSALS.some((refusal) => forComparison(refusal) === value)
+  )
 }
 
 /**

@@ -269,6 +269,32 @@ describe('refusals', () => {
     expect(second.text).not.toBe(first.text)
   })
 
+  it.each([
+    'I can only help with travel.',
+    'I can only help with travel questions.',
+    'i can only help with travel',
+  ])('recognises a refusal that ran on or lost its full stop (%s)', async (raw) => {
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({ text: raw, processingTime: 1 })
+
+    const reply = await brain.reply('write me a poem', [])
+
+    // Substituted rather than passed through, which is what proves it was caught.
+    expect(reply.text).toBe(ON_DEVICE_REFUSAL)
+    await brain.reply('next', [user('write me a poem'), assistant(reply.text)])
+    expect(voiceEngine.resetConversation).toHaveBeenCalled()
+  })
+
+  it('leaves a reply that only mentions travel help alone', async () => {
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({
+      text: 'I can only help with what you have told me, so where are you headed?',
+      processingTime: 1,
+    })
+
+    const reply = await brain.reply('hello', [])
+
+    expect(reply.text).toBe('I can only help with what you have told me, so where are you headed?')
+  })
+
   it('rebuilds the node rather than leaving the refusal in its context', async () => {
     refuses()
     await brain.reply('write me a poem', [])
