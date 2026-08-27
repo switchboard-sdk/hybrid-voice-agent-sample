@@ -328,24 +328,26 @@ stop. Rule 1 is what asks for short. The temperature is also lower than the
 pipeline's default: rules only hold if the sampling is conservative enough to follow
 them.
 
-### What the on-device prompt does not fix
+### What the prompt cannot do, and the code does
 
-Two habits survive it, and neither shows up on the cloud path.
+A direct **"write me a poem" produces verse** whatever the prompt says: a request in
+the user's turn outranks a rule in the system prompt at this size. So the on-device
+set has no rule about what to turn down at all. `OnDeviceBrain` decides that from
+the reply the model actually wrote — verse being several lines with a sentence
+carrying past the end of the first, which prose and lists never do — and says a
+refusal instead of reading a line of poetry aloud.
 
-The model **recites the refusal instead of answering**, and once it has done so twice
-it does little else — "Where should I go in Norway?" comes back as "I can only help
-with travel." A fixed sentence the model has just written is the likeliest thing for
-it to write next, and the rules are still reachable underneath: unrelated questions
-in the same run are answered correctly. Repetition simply beats them.
+Refusing from the reply rather than from the question is what keeps a travel question
+from drawing the refusal. A rule has to guess in advance what a request is; the code
+can see what came back.
 
-No wording of the rule reaches that, so `OnDeviceBrain` guards it in code. A refusal
-is **said a different way** than the node wrote it, so the traveller does not hear
-one sentence twice; and it is **kept out of the replay**, so the node never reads it
-back. See [Conversation history](#conversation-history) for what the second costs.
+Two more things happen to a refusal on the way out, both for the same reason: a fixed
+sentence the model has just written is the likeliest thing for it to write next, and
+two in a row make it the answer to everything. So a refusal is **said a different way**
+each time, and is **kept out of the replay**, so the node never reads it back. See
+[Conversation history](#conversation-history) for what the second costs.
 
-And a direct **"write me a poem" produces verse** whatever the prompt says: a
-request in the user's turn outranks a rule in the system prompt at this size. Hence
-the guard in `OnDeviceBrain` — the prompt asks, the code decides.
+Neither habit shows up on the cloud path.
 
 ## The two brains
 
@@ -556,7 +558,7 @@ the transcript the node reads are not quite the same. A refused turn also counts
 a divergence, which is what forces the replay that drops it. So the node's own
 context holds a refusal for exactly one turn and never reads it back, at the price of
 one re-prefill each time. The screen keeps both, because the traveller heard both.
-[What the on-device prompt does not fix](#what-the-on-device-prompt-does-not-fix) is
+[What the prompt cannot do, and the code does](#what-the-prompt-cannot-do-and-the-code-does) is
 why this is worth an exception at all.
 
 ## TestFlight

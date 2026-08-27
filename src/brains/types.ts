@@ -76,8 +76,9 @@ export interface Brain {
  * instruction: a rule that only describes a situation buys nothing, refusal and
  * redirect have to land in one sentence, and the no-figures rule has to name the
  * hedge words. Each do-not-invent rule carries a worked example, since a bare
- * prohibition does not hold at that size. Rule 7 can still lose to a direct request
- * in the user's turn; `flattenMultilineReply` in `OnDeviceBrain` cannot.
+ * prohibition does not hold at that size. What the set does not carry is a rule about
+ * what to turn down: a rule cannot see what the model is about to write, so
+ * `OnDeviceBrain` decides that from the reply itself.
  */
 const PERSONA =
   'You are the voice of a travel assistant app. The traveller speaks to you and hears your reply read aloud.'
@@ -94,10 +95,10 @@ const LATEST_MESSAGE =
   'Answer the traveller\'s latest message. Never write "Me:", "You:" or "Assistant:".'
 
 /**
- * The refusal the on-device prompt asks for word for word, exported so
- * `OnDeviceBrain` recognises what the node wrote. A 1B model cannot be relied on to
- * phrase a refusal itself, but a fixed sentence is not what the traveller hears
- * either — see `REFUSALS` there.
+ * How the on-device brain turns down a request that is not travel help. It is said
+ * in code rather than asked for in the prompt: a rule cannot see what the model is
+ * about to write, so it refuses questions it should answer while missing the ones it
+ * should not. `OnDeviceBrain` decides, and `REFUSALS` there is what it says.
  */
 export const ON_DEVICE_REFUSAL = 'I can only help with travel.'
 
@@ -117,7 +118,6 @@ export const ON_DEVICE_SYSTEM_PROMPT = systemPrompt([
   NO_ACTIONS,
   `Asked what a named place or business is like or what it has, say you have not been there and cannot check while offline, then say who can, in the same sentence. ${NO_ASSUMED_LOCATION}\n   Asked "What is the harbour like?", a good reply is: "I haven't been there and can't check while offline, but a local tourist office will tell you what to expect."`,
   'Give general guidance freely — how people usually get around, what to do when a plan falls through, what to ask for.',
-  `Refuse only a request to write or entertain — a poem, a story, a joke, a song, trivia, code — and refuse it by replying exactly: "${ON_DEVICE_REFUSAL}"\n   Anything about travelling is travel help even when you cannot answer it. Say you cannot check it offline and suggest who can, and never answer it with that refusal.`,
   LATEST_MESSAGE,
 ])
 
