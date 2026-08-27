@@ -62,10 +62,13 @@ function VoiceAgent(): React.JSX.Element {
       // Below the pipeline's 0.8: the prompt's rules only hold if sampling follows
       // them.
       llmTemperature={0.4}
-      // The same ceiling CloudBrain puts on a cloud reply, so neither path can run
-      // away. A backstop rather than a brevity control: it stops wherever the count
-      // runs out and OnDeviceBrain trims the fragment. Rule 1 is what asks for short.
-      llmMaxTokens={200}
+      // Roughly twice what two spoken sentences need, and the traveller waits for
+      // every token of it. Rule 1 is what asks for short; when the model answers with
+      // a list instead, `flattenMultilineReply` drops everything past the first
+      // sentence — so a ceiling generous enough to hold the rest only buys a longer
+      // wait for words nobody hears. The cloud is capped by its endpoint at 200,
+      // which costs nothing there because generating is not what the wait is made of.
+      llmMaxTokens={80}
       // Undefined leaves the language-model node out of the graph entirely.
       llmModelPath={model.path ?? undefined}
       llmInstructions={ON_DEVICE_SYSTEM_PROMPT}>

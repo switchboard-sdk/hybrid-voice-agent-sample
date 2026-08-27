@@ -314,13 +314,19 @@ in one sentence rather than two rules, a general ban on invented specifics rathe
 than a list of examples to slip between, and no describing a named place, since the
 prompt's own examples of who to ask are otherwise nouns to invent facts about.
 
-Length is capped at 200 tokens on both paths — the chat endpoint applies its own
-ceiling, and `maxTokens` on the node, which it gained in SDK 3.2.6. Neither is a
-brevity control: the ceiling stops a reply wherever the count runs out, usually mid
-sentence, and `OnDeviceBrain` trims the fragment back to the last full stop. Rule 1
-is what asks for short; the ceiling only stops a runaway. The temperature is also
-lower than the pipeline's default, in `App.tsx`: rules only hold if the sampling is
-conservative enough to follow them.
+Length is capped on both paths, and for different reasons. The chat endpoint applies
+its own 200-token ceiling, which costs nothing because generating is not what a cloud
+turn's wait is made of. On the device it is `maxTokens` on the node, set to 80 in
+`App.tsx` — about twice what two spoken sentences need, and the traveller waits for
+every token of it. Asked a broad question the model will answer with a list, and
+`flattenMultilineReply` then drops everything past the first sentence, so a ceiling
+roomy enough to hold the rest only buys a longer wait for words nobody hears.
+
+Neither is a brevity control: a ceiling stops a reply wherever the count runs out,
+usually mid sentence, and `OnDeviceBrain` trims the fragment back to the last full
+stop. Rule 1 is what asks for short. The temperature is also lower than the
+pipeline's default: rules only hold if the sampling is conservative enough to follow
+them.
 
 ### What the on-device prompt does not fix
 

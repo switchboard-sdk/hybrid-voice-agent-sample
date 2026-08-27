@@ -47,8 +47,9 @@ function buildRequest(
   instructions: string
 ): object {
   // The body schema is closed: an unknown field is a 400, not an ignored key.
-  // That includes a reply ceiling, which the endpoint applies itself at 200
-  // tokens — the same cap the on-device node runs under.
+  // That includes a reply ceiling, which the endpoint applies itself at 200 tokens.
+  // The node runs under a tighter one, since on the device the traveller waits for
+  // every token generated.
   return {
     ...credentials,
     // A chat API takes the transcript as it is, so no rendering is needed: the
