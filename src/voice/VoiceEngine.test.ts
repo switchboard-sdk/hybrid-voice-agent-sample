@@ -195,6 +195,8 @@ describe('holding a transcript before it becomes a turn', () => {
     native.emit(JSON.stringify({ objectURI: 'sttNode', name: 'transcribed', data: { text } }))
   const speechStarted = () =>
     native.emit(JSON.stringify({ objectURI: 'vadNode', name: 'speechStarted' }))
+  const speechEnded = () =>
+    native.emit(JSON.stringify({ objectURI: 'vadNode', name: 'speechEnded' }))
 
   /** Collect the turns that reach a listener, and start the engine. */
   function turns(): string[] {
@@ -219,6 +221,26 @@ describe('holding a transcript before it becomes a turn', () => {
     jest.advanceTimersByTime(200)
     speechStarted()
     jest.advanceTimersByTime(600)
+    speechEnded()
+    transcribed('to visit in Budapest?')
+    jest.advanceTimersByTime(350)
+
+    expect(seen).toEqual(['What was the best thing to visit in Budapest?'])
+  })
+
+  // What actually happens on a phone: the VAD reports the rest of the sentence
+  // starting while Whisper is still decoding the first half, so speechStarted lands
+  // before the transcript it has to hold.
+  it('joins speech that resumed before the first half had decoded', () => {
+    const seen = turns()
+
+    speechEnded()
+    speechStarted()
+    transcribed('What was the best thing')
+    jest.advanceTimersByTime(2_000)
+    expect(seen).toEqual([])
+
+    speechEnded()
     transcribed('to visit in Budapest?')
     jest.advanceTimersByTime(350)
 
@@ -230,6 +252,7 @@ describe('holding a transcript before it becomes a turn', () => {
 
     transcribed('What')
     speechStarted()
+    speechEnded()
     transcribed('was the best thing to visit in Budapest?')
     jest.advanceTimersByTime(350)
 

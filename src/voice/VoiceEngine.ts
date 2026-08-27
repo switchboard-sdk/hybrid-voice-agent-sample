@@ -162,6 +162,13 @@ class VoiceEngine {
   /** A transcript waiting to see whether the traveller had only paused. */
   private pendingTurn: { text: string; timer: ReturnType<typeof setTimeout> } | null = null
 
+  /**
+   * Whether the VAD is hearing speech right now. A transcript arrives well after the
+   * silence that ended it — Whisper has to decode first — so by the time one lands
+   * the traveller may already be a word into the rest of the sentence.
+   */
+  private speechActive = false
+
   // MARK: - Public listener API (mirrors the old Expo NativeModule.addListener)
 
   addListener<K extends EdgeSpeechEventName>(
@@ -442,6 +449,7 @@ class VoiceEngine {
     }
     this.isListening = false
     this.isSpeaking = false
+    this.speechActive = false
     this.clearPendingTurn()
     this.setState('idle')
   }
@@ -672,9 +680,11 @@ class VoiceEngine {
       }
       this.holdTranscript(text)
     } else if (node === 'vadNode' && name === 'speechStarted') {
+      this.speechActive = true
       this.holdForResumedSpeech()
       this.emit('onSpeechStart', undefined)
     } else if (node === 'vadNode' && name === 'speechEnded') {
+      this.speechActive = false
       this.emit('onSpeechEnd', undefined)
     } else if (node === 'ttsNode' && name === 'finished') {
       if (!this.isSpeaking) {
@@ -749,9 +759,13 @@ class VoiceEngine {
       this.emit('onTranscript', { text: combined, isFinal: true })
       return
     }
+    // Speech already under way is the rest of this sentence, and waiting out
+    // `turnHoldMs` for it would commit half a turn while it is still being spoken.
+    // Wait for its transcript instead, under the backstop.
+    const wait = this.speechActive ? HELD_TURN_BACKSTOP_MS : this.config.turnHoldMs
     this.pendingTurn = {
       text: combined,
-      timer: setTimeout(() => this.commitTurn(), this.config.turnHoldMs),
+      timer: setTimeout(() => this.commitTurn(), wait),
     }
   }
 
@@ -828,6 +842,7 @@ class VoiceEngine {
     this.clearSpeakWatchdog()
     this.pendingGeneration = null
     this.clearPendingTurn()
+    this.speechActive = false
     this.config = {
       vadSensitivity: 0.5,
       vadSilenceMs: DEFAULT_VAD_SILENCE_MS,
