@@ -23,7 +23,7 @@ flowchart LR
   subgraph phone["On the phone"]
     direction LR
     mic(["Mic"]) --> vad["Silero VAD"]
-    vad -- "speechEnded" --> stt["Whisper STT"]
+    vad -- "speechEnded<br/>(held)" --> stt["Whisper STT"]
     stt --> router{"route()"}
     router -- "on-device" --> llm["LlamaCpp.LLM node<br/>Llama 3.2 1B"]
     llm --> tts["Sherpa TTS"]
@@ -243,27 +243,37 @@ about itself.
 ## Turn taking
 
 What ends a turn is silence, and nothing else. `Silero.VAD` scores frames of audio
-and reports `speechEnded` after `vadSilenceMs` of quiet; that triggers Whisper, and
-the transcript becomes the turn. The VAD has no idea what was said, so a pause to
-think and the end of a sentence look identical to it.
+and reports `speechEnded` after `vadSilenceMs` of quiet. The VAD has no idea what was
+said, so a pause to think and the end of a sentence look identical to it.
 
 Two numbers, both in `App.tsx`:
 
-| Prop           | Default | What it holds                                                          |
-| -------------- | ------- | ---------------------------------------------------------------------- |
-| `vadSilenceMs` | 500     | Silence before the VAD calls the utterance over.                       |
-| `turnHoldMs`   | 350     | Silence after that, before the transcript is allowed to become a turn. |
+| Prop           | Default | What it holds                                                  |
+| -------------- | ------- | -------------------------------------------------------------- |
+| `vadSilenceMs` | 500     | Silence before the VAD calls the utterance over.               |
+| `turnHoldMs`   | 350     | Silence after that, before Whisper is asked for what it heard. |
 
-The second is what puts a split sentence back together. Speech that resumes inside
-the hold joins the transcript already waiting rather than starting a second turn, so
-"What was the best thing… to visit in Budapest?" arrives once. It is also what keeps
-an opening word that decoded on its own — a fragment that short usually decodes to
-nothing, which is how the first word of an utterance goes missing.
+**The second wait sits in front of the transcription, not behind it,** which is the
+part worth knowing. `speechEnded` does not reach `sttNode.transcribe` through the
+graph; `VoiceEngine` makes the call, and speech starting again inside the hold
+cancels it. So "What was the best thing… to visit in Budapest?" is decoded once, as
+one sentence, rather than as two fragments stitched together afterwards.
 
-They add up: 850 ms is what the traveller waits after falling silent, and it is also
-how long barge-in takes to register, since that fires on a decoded transcript rather
-than on the VAD. Lower them for a snappier demo and sentences split more often.
-Tuning them wants a real phone and real speech.
+Asking on the VAD edge instead is what loses the first word of an utterance.
+`transcribe` reads everything since the last call **and consumes it**, so an opening
+word alone in a short segment gets decoded to nothing and thrown away, and the
+sentence reaches the model starting from its second word. Not asking at all leaves
+those words in the window for the call that follows.
+
+A pause long enough to survive the hold still splits the audio, and Whisper takes
+long enough that the rest can be under way by the time the words come back. A
+transcript that lands while the VAD is hearing speech waits for the rest and is
+joined to it.
+
+The waits add up: 850 ms is what the traveller waits after falling silent, and it is
+also how long barge-in takes to register, since that fires on a decoded transcript
+rather than on the VAD. Lower them for a snappier demo and sentences split more
+often. Tuning them wants a real phone and real speech.
 
 The honest fix is a second stage that scores whether the utterance sounds finished,
 rather than a longer wait that treats every pause the same.
