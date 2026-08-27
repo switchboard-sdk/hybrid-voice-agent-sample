@@ -169,7 +169,7 @@ src/
     EdgeSpeechProvider.tsx  configuration and lifecycle
     hook.ts                 useEdgeSpeech()
   brains/                   the two interchangeable brains
-    types.ts                the Brain interface and the shared system prompt
+    types.ts                the Brain interface and the three system prompts
     OnDeviceBrain.ts        the LlamaCpp.LLM node
     CloudBrain.ts           a cloud LLM over HTTP
     router.ts               which brain answers — the file to change
@@ -242,11 +242,21 @@ about itself.
 
 ## The persona
 
-Both brains are given the same system prompt, `DEFAULT_SYSTEM_PROMPT` in
-`src/brains/types.ts`, so a turn reads the same whichever one served it. It is
-written for the smaller of the two, because what the 1B on-device model can follow a
-cloud model can follow as well: numbered one-line rules rather than a paragraph, and
-**every rule phrased as something to do**.
+Three prompts, all in `src/brains/types.ts`: the rules both brains are given, plus a
+set for each. What the two models can honestly say differs — the one on the phone
+cannot look anything up and has nothing worth trusting to say about a named place,
+while the cloud model is neither offline nor short of knowledge. A single prompt has
+to be written down to the smaller of them, which leaves the cloud brain repeating
+rules that are not true of it.
+
+Shared are the rules about the shape of a spoken reply rather than what is behind
+it: one or two sentences, no lists or verse, nothing it can book or phone, answer
+the latest message. `systemPrompt()` numbers each set from 1, so a shared rule sits
+wherever it reads best in `ON_DEVICE_SYSTEM_PROMPT` and `CLOUD_SYSTEM_PROMPT`
+without either having to count.
+
+The on-device set is written for the smaller model: numbered one-line rules rather
+than a paragraph, and **every rule phrased as something to do**.
 
 That last part matters more than it sounds. A rule that states the situation — "you
 have no internet, no booking system and no live data" — buys nothing at this size; a
@@ -263,7 +273,7 @@ is what asks for short; the ceiling only stops a runaway. The temperature is als
 lower than the pipeline's default, in `App.tsx`: rules only hold if the sampling is
 conservative enough to follow them.
 
-### What the prompt does not fix
+### What the on-device prompt does not fix
 
 Two habits survive it.
 
@@ -276,7 +286,7 @@ And a direct **"write me a poem" produces verse** whatever the prompt says: a
 request in the user's turn outranks a rule in the system prompt at this size. Hence
 the guard in `OnDeviceBrain` — the prompt asks, the code decides.
 
-Neither habit appears on the cloud brain with the same prompt.
+Both are the model rather than the wording — neither shows up on the cloud path.
 
 ## The two brains
 

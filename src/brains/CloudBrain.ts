@@ -1,5 +1,5 @@
 import {
-  DEFAULT_SYSTEM_PROMPT,
+  CLOUD_SYSTEM_PROMPT,
   brainError,
   cancelledError,
   type Brain,
@@ -116,7 +116,7 @@ export class CloudBrain implements Brain {
   private readonly appSecret?: string
   private readonly timeoutMs: number
   private readonly fetchImpl: typeof fetch
-  private instructions = DEFAULT_SYSTEM_PROMPT
+  private instructions = CLOUD_SYSTEM_PROMPT
 
   constructor(config: CloudBrainConfig = {}) {
     this.baseUrl = config.baseUrl ?? DEFAULT_BASE_URL
@@ -130,9 +130,9 @@ export class CloudBrain implements Brain {
 
   /**
    * Nothing to clear — there is no cached conversation on this side. The system
-   * prompt is kept so both brains answer in the same voice.
+   * prompt is kept, and defaults to the cloud set rather than the on-device one.
    */
-  reset(instructions: string = DEFAULT_SYSTEM_PROMPT): void {
+  reset(instructions: string = CLOUD_SYSTEM_PROMPT): void {
     this.instructions = instructions
   }
 

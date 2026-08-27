@@ -5,7 +5,7 @@ import { EdgeSpeechProvider } from './src/voice'
 import { ConversationScreen } from './src/screens/ConversationScreen'
 import { ModelDownloadScreen } from './src/screens/ModelDownloadScreen'
 import { SetupScreen } from './src/screens/SetupScreen'
-import { DEFAULT_SYSTEM_PROMPT } from './src/brains'
+import { ON_DEVICE_SYSTEM_PROMPT } from './src/brains'
 import { useModel } from './src/model'
 
 // Credentials from environment variables (see .env.example)
@@ -61,7 +61,7 @@ function VoiceAgent(): React.JSX.Element {
       llmMaxTokens={200}
       // Undefined leaves the language-model node out of the graph entirely.
       llmModelPath={model.path ?? undefined}
-      llmInstructions={DEFAULT_SYSTEM_PROMPT}>
+      llmInstructions={ON_DEVICE_SYSTEM_PROMPT}>
       <ConversationScreen modelReady={model.status === 'ready'} />
     </EdgeSpeechProvider>
   )

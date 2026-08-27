@@ -5,7 +5,7 @@
  */
 
 export type { Brain, BrainId, BrainReply, ConversationMessage } from './types'
-export { DEFAULT_SYSTEM_PROMPT } from './types'
+export { CLOUD_SYSTEM_PROMPT, ON_DEVICE_SYSTEM_PROMPT } from './types'
 export { CloudBrain } from './CloudBrain'
 export { OnDeviceBrain } from './OnDeviceBrain'
 export { brains, canAnswer, cloudBrain, onDeviceBrain, route } from './router'

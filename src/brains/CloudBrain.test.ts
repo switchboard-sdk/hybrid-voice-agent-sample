@@ -1,5 +1,5 @@
 import { CloudBrain, type CloudBrainConfig } from './CloudBrain'
-import { DEFAULT_SYSTEM_PROMPT, type ConversationMessage } from './types'
+import { CLOUD_SYSTEM_PROMPT, ON_DEVICE_SYSTEM_PROMPT, type ConversationMessage } from './types'
 
 const user = (content: string): ConversationMessage => ({ role: 'user', content })
 const assistant = (content: string): ConversationMessage => ({ role: 'assistant', content })
@@ -66,12 +66,17 @@ describe('reply', () => {
 
     const { messages } = sentBody(fetchImpl)
     expect(messages[0].role).toBe('system')
-    expect(messages[0].content).toBe(DEFAULT_SYSTEM_PROMPT)
+    expect(messages[0].content).toBe(CLOUD_SYSTEM_PROMPT)
     expect(messages.slice(1)).toEqual([
       { role: 'user', content: 'two nights in Lisbon' },
       { role: 'assistant', content: 'booked' },
       { role: 'user', content: 'and after that?' },
     ])
+  })
+
+  it('is not told it is offline, which is the on-device set', () => {
+    expect(CLOUD_SYSTEM_PROMPT).not.toMatch(/offline/i)
+    expect(ON_DEVICE_SYSTEM_PROMPT).toMatch(/offline/i)
   })
 
   it('caps the transcript at what the endpoint forwards, so the persona survives', async () => {
