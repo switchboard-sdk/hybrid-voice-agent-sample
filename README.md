@@ -349,6 +349,33 @@ each time, and is **kept out of the replay**, so the node never reads it back. S
 
 Neither habit shows up on the cloud path.
 
+### What neither reaches
+
+**The model on the phone invents specifics, confidently, and nothing here stops it.**
+Rules 3 and 5 forbid exactly that; it breaks them anyway. Asked how far something is
+it gives a walking time, asked about a place it has never heard of it describes one,
+and asked nothing at all it will decide where the traveller is standing. On an
+iPhone 13 it has put Stavanger in the Lofoten islands, quoted flight durations to
+the minute, and opened a reply with "You're in the airport, and you're due to fly to
+Kathmandu."
+
+Wording the rules differently does not reach it and neither does sampling at
+temperature 0, both of which were tried. A code guard could catch the figures — a
+price or a distance is detectable without understanding it — but not the invented
+places, and refusing every place the traveller did not name first leaves the brain
+unable to answer the questions people actually ask.
+
+So it stands as the honest limit of a 1B model with no retrieval behind it, and the
+cloud brain is one tap away for anything that needs a fact. Worth knowing before
+showing this to anyone: the replies are fluent and sound authoritative, which is
+exactly what makes them a problem.
+
+**Recognition is the other one.** `ggml-base.en` is weak on proper nouns, which is
+the one class of word a travel assistant hears most — roughly one utterance in six
+comes back wrong, and "Budapest" has arrived as "Buddha Pasht". Nothing downstream
+questions a mangled name, so a single misrecognition becomes the premise for the
+rest of the conversation.
+
 ## The two brains
 
 Speech recognition and synthesis are always on the device. The only thing that
