@@ -31,9 +31,9 @@ export interface LLMReply {
 type Listener = (payload: unknown) => void
 
 /**
- * Extensions the SDK must initialize. ONNX underpins Silero VAD. Note the key is
- * `Silero` (the name the C++ SileroVADExtension registers) — not `SileroVAD`,
- * which was the Objective-C extension's name in the old Expo implementation.
+ * Extensions the SDK must initialize. ONNX underpins Silero VAD. The key is
+ * `Silero`, the name the C++ SileroVADExtension registers — not `SileroVAD`, which
+ * the Objective-C extension answers to and this does not use.
  */
 const EXTENSIONS = { Onnx: {}, Silero: {}, Whisper: {}, Sherpa: {}, LlamaCpp: {} }
 
@@ -115,8 +115,7 @@ interface VoiceEngineConfig {
 
 /**
  * The on-device voice pipeline, authored entirely in TypeScript over the
- * Switchboard JSON-RPC channel. This is the TypeScript port of the old native
- * `AudioGraphManager.swift`: it builds the combined VAD → STT + TTS graph,
+ * Switchboard JSON-RPC channel: it builds the combined VAD → STT + TTS graph,
  * creates the engine, runs the idle/listening/speaking state machine, handles
  * barge-in, and translates raw SDK events into EdgeSpeech's public events.
  *
@@ -172,7 +171,7 @@ class VoiceEngine {
    */
   private speechActive = false
 
-  // MARK: - Public listener API (mirrors the old Expo NativeModule.addListener)
+  // MARK: - Public listener API
 
   addListener<K extends EdgeSpeechEventName>(
     event: K,
@@ -556,8 +555,7 @@ class VoiceEngine {
   }
 
   /**
-   * Build the combined graph config (VAD → STT + TTS in one graph). Mirrors the
-   * old Swift `buildCombinedGraphConfig()` exactly:
+   * Build the combined graph config (VAD → STT + TTS in one graph):
    *   inputNode → multiChannelToMono → busSplitter → vadNode (SileroVAD.VAD)
    *                                                 → sttNode (Whisper.STT)
    *   ttsNode (Sherpa.TTS) → monoToMultiChannel → outputNode
