@@ -269,19 +269,31 @@ describe('refusals', () => {
     expect(second.text).not.toBe(first.text)
   })
 
-  it.each([
-    'I can only help with travel.',
-    'I can only help with travel questions.',
-    'i can only help with travel',
-  ])('recognises a refusal that ran on or lost its full stop (%s)', async (raw) => {
-    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({ text: raw, processingTime: 1 })
+  it.each(['I can only help with travel.', 'i can only help with travel'])(
+    'rewords a refusal that is nothing but the canned sentence (%s)',
+    async (raw) => {
+      jest.mocked(voiceEngine.generate).mockResolvedValueOnce({ text: raw, processingTime: 1 })
 
-    const reply = await brain.reply('write me a poem', [])
+      const reply = await brain.reply('write me a poem', [])
 
-    // Substituted rather than passed through, which is what proves it was caught.
-    expect(reply.text).toBe(ON_DEVICE_REFUSAL)
-    await brain.reply('next', [user('write me a poem'), assistant(reply.text)])
+      expect(reply.text).toBe(ON_DEVICE_REFUSAL)
+    }
+  )
+
+  // The model's own redirect beats any canned sentence, so it is spoken as written
+  // — but it still goes nowhere near the replay.
+  it('keeps a refusal that carried its own redirect, and still scrubs it', async () => {
+    const ranOn =
+      "I can only help with travel. You'll need a sports website for the 1998 World Cup."
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({ text: ranOn, processingTime: 1 })
+
+    const reply = await brain.reply('who won the world cup?', [])
+    expect(reply.text).toBe(ranOn)
+
+    await brain.reply('where should I go?', [user('who won the world cup?'), assistant(ranOn)])
+
     expect(voiceEngine.resetConversation).toHaveBeenCalled()
+    expect(lastPrompt()).toBe('where should I go?')
   })
 
   it('leaves a reply that only mentions travel help alone', async () => {

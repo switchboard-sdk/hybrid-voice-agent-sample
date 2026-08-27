@@ -88,11 +88,18 @@ const forComparison = (text: string): string =>
 const REFUSAL_OPENING = forComparison(ON_DEVICE_REFUSAL)
 
 function isRefusal(text: string): boolean {
+  return forComparison(text).startsWith(REFUSAL_OPENING) || isBareRefusal(text)
+}
+
+/**
+ * A refusal and nothing else, which is the only kind worth rewording. The model
+ * often adds a redirect of its own — "…you'll need a sports website for that" —
+ * and that is a better reply than any canned sentence, so it is left to speak for
+ * itself. Both kinds are kept out of the replay just the same.
+ */
+function isBareRefusal(text: string): boolean {
   const value = forComparison(text)
-  return (
-    value.startsWith(REFUSAL_OPENING) ||
-    REFUSALS.some((refusal) => forComparison(refusal) === value)
-  )
+  return REFUSALS.some((refusal) => forComparison(refusal) === value)
 }
 
 /**
@@ -210,7 +217,7 @@ export class OnDeviceBrain implements Brain {
     this.syncedMessages = droppedTheTurn || refused ? 0 : history.length + 2
 
     return {
-      text: refused ? this.nextRefusal() : text,
+      text: isBareRefusal(text) ? this.nextRefusal() : text,
       brain: this.id,
       processingTime,
     }
