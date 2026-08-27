@@ -90,8 +90,8 @@ interface VoiceEngineConfig {
   /**
    * Further silence held after the VAD's own, in ms, before Whisper is asked for
    * the utterance. Speech starting again inside the window cancels the call, so the
-   * rest of the sentence is decoded along with it rather than separately. 0 asks
-   * immediately, which is the behaviour of a `speechEnded → transcribe` edge.
+   * rest of the sentence is decoded along with it rather than separately. 0 asks as
+   * soon as the VAD reports the utterance over, and so never joins anything.
    */
   turnHoldMs: number
   sampleRate: number
@@ -752,12 +752,11 @@ class VoiceEngine {
    * Ask Whisper for everything it has heard since the last time it was asked, after
    * `turnHoldMs` in which speech starting again cancels the call.
    *
-   * This is why the graph has no `speechEnded → transcribe` edge. The VAD ends an
-   * utterance on silence alone, so a pause to think ends one exactly as the end of a
-   * sentence does; transcribing on that edge decodes the fragment and, because the
-   * call consumes the audio it read, throws the words away when the fragment was too
-   * short to decode. Holding the call instead leaves the audio in Whisper's window,
-   * so the rest of the sentence carries it along.
+   * The VAD ends an utterance on silence alone, so a pause to think ends one exactly
+   * as the end of a sentence does. Because the call consumes the audio it reads, a
+   * fragment too short to decode would take its own words with it — so the call
+   * waits, and the audio stays in Whisper's window for the rest of the sentence to
+   * carry along.
    */
   private scheduleTranscribe(): void {
     this.clearTranscribeTimer()

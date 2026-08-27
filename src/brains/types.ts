@@ -68,9 +68,9 @@ export interface Brain {
  *
  * What the two models can honestly say differs. The on-device one cannot look
  * anything up and has nothing worth trusting to say about a named place; the cloud
- * one is neither offline nor short of knowledge. A single prompt has to be written
- * down to the smaller of them, which leaves the cloud brain repeating rules that
- * are not true of it.
+ * one is neither offline nor short of knowledge, and is told to answer with a figure
+ * rather than hedge over one it knows. Each set holds only what is true of its own
+ * model.
  *
  * The on-device set is written for a 1B model, where every line has to be an
  * instruction: a rule that only describes a situation buys nothing, refusal and
