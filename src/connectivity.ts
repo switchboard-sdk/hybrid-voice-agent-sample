@@ -9,7 +9,7 @@
  * on rather than on the next request.
  */
 
-import { useEffect, useState } from 'react'
+import { useSyncExternalStore } from 'react'
 import { addNetworkStateListener, getNetworkStateAsync, type NetworkState } from 'expo-network'
 
 /** Spoken rather than shown — an audible notice is the point of it. */
@@ -21,35 +21,76 @@ function isOnline(state: NetworkState): boolean {
   return state.isConnected !== false && state.isInternetReachable !== false
 }
 
-/** Tracks the device's connectivity, starting from the state at mount. */
-export function useOnline(): boolean {
-  const [online, setOnline] = useState(true)
+/**
+ * One subscription for the whole process, opened on first use and never closed.
+ *
+ * `expo-network` starts a single `NWPathMonitor` when its first listener attaches
+ * and cancels it when the last one leaves, and a cancelled `NWPathMonitor` cannot be
+ * restarted. A subscription owned by a component would therefore stop reporting the
+ * moment that component remounted, silently and for the rest of the session — so
+ * ownership sits here instead, and React reads it.
+ */
+let online = true
+let listening = false
+let reportedByOS = false
+const subscribers = new Set<() => void>()
 
-  useEffect(() => {
-    let subscribed = true
-    let reported = false
+function publish(next: boolean): void {
+  if (next === online) {
+    return
+  }
+  online = next
+  subscribers.forEach((notify) => notify())
+}
 
-    const subscription = addNetworkStateListener((state) => {
-      reported = true
-      setOnline(isOnline(state))
+function startListening(): void {
+  if (listening) {
+    return
+  }
+  listening = true
+
+  addNetworkStateListener((state) => {
+    reportedByOS = true
+    console.log('[net]', isOnline(state) ? 'online' : 'offline', JSON.stringify(state))
+    publish(isOnline(state))
+  })
+
+  // Only a starting point, and only if it lands first: a change reported while this
+  // was in flight is newer than it is. A read that fails leaves the optimistic
+  // default standing until the OS reports something.
+  getNetworkStateAsync()
+    .then((state) => {
+      if (!reportedByOS) {
+        publish(isOnline(state))
+      }
     })
+    .catch(() => {})
+}
 
-    // Only a starting point, and only if it lands first: a change reported while
-    // this was in flight is newer than it is. A read that fails leaves the
-    // optimistic default standing until the OS reports something.
-    getNetworkStateAsync()
-      .then((state) => {
-        if (subscribed && !reported) {
-          setOnline(isOnline(state))
-        }
-      })
-      .catch(() => {})
+function subscribe(notify: () => void): () => void {
+  startListening()
+  subscribers.add(notify)
+  return () => {
+    subscribers.delete(notify)
+  }
+}
 
-    return () => {
-      subscribed = false
-      subscription.remove()
-    }
-  }, [])
+/** Tracks the device's connectivity, starting from the state at first use. */
+export function useOnline(): boolean {
+  return useSyncExternalStore(
+    subscribe,
+    () => online,
+    () => online
+  )
+}
 
-  return online
+/**
+ * Forget the connection state and the subscription. For tests only.
+ * @internal
+ */
+export function _resetConnectivity(): void {
+  online = true
+  listening = false
+  reportedByOS = false
+  subscribers.clear()
 }

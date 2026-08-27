@@ -3,6 +3,7 @@ import { act, render, screen, fireEvent, waitFor } from '@testing-library/react-
 
 import { ModelDownloadScreen } from './ModelDownloadScreen'
 import type { ModelDownload, ModelStatus } from '../model'
+import { _resetConnectivity } from '../connectivity'
 
 jest.mock('expo-network')
 // jest-expo registers its own expo-file-system mock in its setup file, so this has
@@ -31,6 +32,7 @@ const renderScreen = (state: ModelDownload) =>
 beforeEach(() => {
   jest.clearAllMocks()
   network.resetNetworkMock()
+  _resetConnectivity()
 })
 
 describe('ModelDownloadScreen', () => {

@@ -1,6 +1,6 @@
 import { act, renderHook } from '@testing-library/react-native'
 
-import { useOnline } from './connectivity'
+import { _resetConnectivity, useOnline } from './connectivity'
 
 jest.mock('expo-network')
 
@@ -8,6 +8,7 @@ const network = jest.requireMock('expo-network') as typeof import('../__mocks__/
 
 beforeEach(() => {
   network.resetNetworkMock()
+  _resetConnectivity()
 })
 
 describe('useOnline', () => {
@@ -71,13 +72,28 @@ describe('useOnline', () => {
     expect(result.current).toBe(true)
   })
 
-  it('stops listening once the caller unmounts', async () => {
-    const { unmount } = renderHook(() => useOnline())
+  it('keeps one subscription however many callers come and go', async () => {
+    // expo-network cancels its NWPathMonitor when the last listener leaves and
+    // cannot restart it, so the subscription outlives the components that read it.
+    const first = renderHook(() => useOnline())
     await act(async () => {})
-    const subscription = network.addNetworkStateListener.mock.results[0].value
+    renderHook(() => useOnline())
+    first.unmount()
 
-    unmount()
+    expect(network.addNetworkStateListener).toHaveBeenCalledTimes(1)
+    expect(network.addNetworkStateListener.mock.results[0].value.remove).not.toHaveBeenCalled()
+  })
 
-    expect(subscription.remove).toHaveBeenCalled()
+  it('still reports a change after the only reader remounted', async () => {
+    const first = renderHook(() => useOnline())
+    await act(async () => {})
+    first.unmount()
+
+    const { result } = renderHook(() => useOnline())
+    await act(async () => {
+      network.setNetworkState({ isConnected: false, isInternetReachable: false })
+    })
+
+    expect(result.current).toBe(false)
   })
 })

@@ -230,8 +230,10 @@ Each assistant turn carries the brain that answered it and the time that brain t
 — `AI · On-device · 1.2 s` — coloured per brain, so switching mid-conversation shows
 the difference rather than claiming it. The number is the brain's own measurement so
 the two paths compare like for like; the round trip goes to the console as `[turn]`.
-That plus the `[LLM]` and `[Cloud]` lines each brain logs is the whole of the
-telemetry — there is no analytics dependency.
+That, the `[LLM]` and `[Cloud]` lines each brain logs, and a `[net]` line whenever
+the connection changes are the whole of the telemetry — there is no analytics
+dependency. Connectivity is worth a line of its own because nothing else about it is
+visible: a brain being withdrawn looks the same as one that was never picked.
 
 The voice is never presented as a person: the header says so, and every reply is
 labelled `AI`.
