@@ -296,6 +296,14 @@ the latest message. `systemPrompt()` numbers each set from 1, so a shared rule s
 wherever it reads best in `ON_DEVICE_SYSTEM_PROMPT` and `CLOUD_SYSTEM_PROMPT`
 without either having to count.
 
+The two sets pull in opposite directions, and that is the point of having two. The
+on-device rules exist to stop a model inventing what it cannot know; the cloud rules
+exist to stop one hedging over what it does. Asked what a day in Iceland costs, the
+cloud is told to name a range and flag it as approximate, and to send the traveller
+away to check only when the answer is genuinely live — today's price, whether
+somewhere is open right now. Caution written for the smaller model is not caution on
+the larger one, it is just an unhelpful answer.
+
 The on-device set is written for the smaller model: numbered one-line rules rather
 than a paragraph, and **every rule phrased as something to do**.
 
