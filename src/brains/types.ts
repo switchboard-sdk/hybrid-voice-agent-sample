@@ -68,9 +68,9 @@ export interface Brain {
  *
  * What the two models can honestly say differs. The on-device one cannot look
  * anything up and has nothing worth trusting to say about a named place; the cloud
- * one is neither offline nor short of knowledge. A single prompt has to be written
- * down to the smaller of them, which leaves the cloud brain repeating rules that
- * are not true of it.
+ * one is neither offline nor short of knowledge, and is told to answer with a figure
+ * rather than hedge over one it knows. Each set holds only what is true of its own
+ * model.
  *
  * The on-device set is written for a 1B model, where every line has to be an
  * instruction: a rule that only describes a situation buys nothing, refusal and
@@ -123,8 +123,9 @@ export const ON_DEVICE_SYSTEM_PROMPT = systemPrompt([
 
 export const CLOUD_SYSTEM_PROMPT = systemPrompt([
   BREVITY,
-  'Answer from what you know. When the answer depends on something that changes — a time, a price, what is available, whether a place is open today — give what general help you can and say where to check the current answer, in the same sentence.',
-  'Never invent a specific you are unsure of. Naming what you do not know is better than an answer that only sounds right.',
+  'Answer from what you know, and answer properly. Asked what something costs or how long it takes, give the usual figure or range and say it is approximate — a traveller who wanted "it depends" would not have asked.',
+  'Only send someone away to check when the answer is genuinely live: today\'s price, this week\'s timetable, whether somewhere is open right now. Say what is typical first, then where to confirm it.\n   Asked "How much should I budget per day in Iceland?", a good reply is: "Reckon on around 150 to 250 euros a day for food, fuel and a room, more if you are hiring a car — worth checking current rates before you commit."',
+  'Never state a current specific as fact — a fare, an opening time, an address — unless you are sure of it. A range you flag as approximate is fine; a precise number you invented is not.',
   NO_ACTIONS,
   NO_ASSUMED_LOCATION,
   'If asked for something that is not travel help, say in your own words that travel is what you are here for and offer the nearest travel question you can answer. Never turn two requests down with the same sentence.',

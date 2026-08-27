@@ -5,7 +5,7 @@ import { ConversationScreen } from './ConversationScreen'
 import { EdgeSpeechProvider } from '../voice'
 import { voiceEngine } from '../voice/VoiceEngine'
 import { cloudBrain, onDeviceBrain, type BrainReply } from '../brains'
-import { OFFLINE_NOTICE } from '../connectivity'
+import { OFFLINE_NOTICE, _resetConnectivity } from '../connectivity'
 
 // Capture addListener callbacks by event name so tests can simulate the pipeline.
 const eventListeners: Record<string, Array<(data?: unknown) => void>> = {}
@@ -72,6 +72,7 @@ describe('ConversationScreen', () => {
   beforeEach(() => {
     jest.clearAllMocks()
     network.resetNetworkMock()
+    _resetConnectivity()
     Object.keys(eventListeners).forEach((key) => {
       eventListeners[key] = []
     })

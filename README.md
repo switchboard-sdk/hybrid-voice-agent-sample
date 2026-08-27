@@ -230,8 +230,10 @@ Each assistant turn carries the brain that answered it and the time that brain t
 — `AI · On-device · 1.2 s` — coloured per brain, so switching mid-conversation shows
 the difference rather than claiming it. The number is the brain's own measurement so
 the two paths compare like for like; the round trip goes to the console as `[turn]`.
-That plus the `[LLM]` and `[Cloud]` lines each brain logs is the whole of the
-telemetry — there is no analytics dependency.
+That, the `[LLM]` and `[Cloud]` lines each brain logs, and a `[net]` line whenever
+the connection changes are the whole of the telemetry — there is no analytics
+dependency. Connectivity is worth a line of its own because nothing else about it is
+visible: a brain being withdrawn looks the same as one that was never picked.
 
 The voice is never presented as a person: the header says so, and every reply is
 labelled `AI`.
@@ -253,17 +255,16 @@ Two numbers, both in `App.tsx`:
 | `vadSilenceMs` | 500     | Silence before the VAD calls the utterance over.               |
 | `turnHoldMs`   | 350     | Silence after that, before Whisper is asked for what it heard. |
 
-**The second wait sits in front of the transcription, not behind it,** which is the
-part worth knowing. `speechEnded` does not reach `sttNode.transcribe` through the
-graph; `VoiceEngine` makes the call, and speech starting again inside the hold
-cancels it. So "What was the best thing… to visit in Budapest?" is decoded once, as
-one sentence, rather than as two fragments stitched together afterwards.
+**The second wait sits in front of the transcription.** `speechEnded` does not reach
+`sttNode.transcribe` through the graph; `VoiceEngine` makes the call, and speech
+starting again inside the hold cancels it. So "What was the best thing… to visit in
+Budapest?" is decoded once, as one sentence.
 
-Asking on the VAD edge instead is what loses the first word of an utterance.
-`transcribe` reads everything since the last call **and consumes it**, so an opening
-word alone in a short segment gets decoded to nothing and thrown away, and the
-sentence reaches the model starting from its second word. Not asking at all leaves
-those words in the window for the call that follows.
+That ordering is what keeps the opening word of an utterance. `transcribe` reads
+everything since the last call **and consumes it**, so a word alone in a short
+segment would be decoded to nothing and thrown away, and the sentence would reach
+the model starting from its second word. Holding the call leaves those words in the
+window for the one that follows.
 
 A pause long enough to survive the hold still splits the audio, and Whisper takes
 long enough that the rest can be under way by the time the words come back. A
@@ -286,15 +287,22 @@ carries the extension.
 Three prompts, all in `src/brains/types.ts`: the rules both brains are given, plus a
 set for each. What the two models can honestly say differs — the one on the phone
 cannot look anything up and has nothing worth trusting to say about a named place,
-while the cloud model is neither offline nor short of knowledge. A single prompt has
-to be written down to the smaller of them, which leaves the cloud brain repeating
-rules that are not true of it.
+while the cloud model is neither offline nor short of knowledge. Each is told only
+what is true of it.
 
 Shared are the rules about the shape of a spoken reply rather than what is behind
 it: one or two sentences, no lists or verse, nothing it can book or phone, answer
 the latest message. `systemPrompt()` numbers each set from 1, so a shared rule sits
 wherever it reads best in `ON_DEVICE_SYSTEM_PROMPT` and `CLOUD_SYSTEM_PROMPT`
 without either having to count.
+
+The two sets pull in opposite directions, and that is the point of having two. The
+on-device rules exist to stop a model inventing what it cannot know; the cloud rules
+exist to stop one hedging over what it does. Asked what a day in Iceland costs, the
+cloud is told to name a range and flag it as approximate, and to send the traveller
+away to check only when the answer is genuinely live — today's price, whether
+somewhere is open right now. Caution written for the smaller model is not caution on
+the larger one, it is just an unhelpful answer.
 
 The on-device set is written for the smaller model: numbered one-line rules rather
 than a paragraph, and **every rule phrased as something to do**.
@@ -324,11 +332,10 @@ with travel." A fixed sentence the model has just written is the likeliest thing
 it to write next, and the rules are still reachable underneath: unrelated questions
 in the same run are answered correctly. Repetition simply beats them.
 
-Scoping what the rule catches does not touch this, so `OnDeviceBrain` does two
-things instead. A refusal is **said a different way** than the node wrote it, so the
-traveller does not hear one sentence twice; and it is **kept out of the replay**, so
-the node never reads it back. See [Conversation history](#conversation-history) for
-what the second costs.
+No wording of the rule reaches that, so `OnDeviceBrain` guards it in code. A refusal
+is **said a different way** than the node wrote it, so the traveller does not hear
+one sentence twice; and it is **kept out of the replay**, so the node never reads it
+back. See [Conversation history](#conversation-history) for what the second costs.
 
 And a direct **"write me a poem" produces verse** whatever the prompt says: a
 request in the user's turn outranks a rule in the system prompt at this size. Hence

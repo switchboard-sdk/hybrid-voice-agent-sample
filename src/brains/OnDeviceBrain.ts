@@ -9,8 +9,17 @@ import {
   type ConversationMessage,
 } from './types'
 
-/** How much of the transcript a replay resends, so it cannot outgrow the context. */
-const MAX_REPLAY_MESSAGES = 40
+/**
+ * How much of the transcript a replay resends.
+ *
+ * Sized by what a 1B model can hold in mind rather than by what fits its context,
+ * which is the looser bound. A long background reads to it as the thing to answer:
+ * the new message becomes one line among many, and the reply comes back about an
+ * older turn or repeats a line of the background word for word. Ten is also what
+ * `CloudBrain` sends, so a switch mid-conversation hands the two brains comparable
+ * context.
+ */
+const MAX_REPLAY_MESSAGES = 10
 
 /**
  * The node's canned answer when a prompt cannot fit its context. It reads as an
