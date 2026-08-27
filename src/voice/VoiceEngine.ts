@@ -61,8 +61,39 @@ const FIRST_TOKEN_TIMEOUT_MS = 8_000
  */
 const SPEAK_TIMEOUT_MS = 30_000
 
+/**
+ * The two ends of the endpointing budget, and the only defence against a pause
+ * mid-sentence being read as the end of a turn — the VAD scores frames of audio and
+ * knows nothing of what was said. Together they are what the traveller waits after
+ * falling silent, so raising either buys fewer split turns at the cost of a slower
+ * reply.
+ */
+const DEFAULT_VAD_SILENCE_MS = 500
+const DEFAULT_TURN_HOLD_MS = 350
+
+/**
+ * Ceiling on a hold that speech interrupted, in ms. The held transcript waits for
+ * that speech to be transcribed so the two can be joined; if it never is — a cough,
+ * a door, anything the VAD hears and Whisper does not — this commits what is
+ * already there rather than stranding the turn.
+ */
+const HELD_TURN_BACKSTOP_MS = 15_000
+
 interface VoiceEngineConfig {
   vadSensitivity: number
+  /**
+   * Silence that ends an utterance, in ms. The VAD hears silence and nothing else,
+   * so this is the whole of what tells a pause to think from the end of a sentence:
+   * too short splits a sentence in two, too long makes every reply wait.
+   */
+  vadSilenceMs: number
+  /**
+   * Further silence held after the VAD's own, in ms, before a transcript becomes a
+   * turn. Speech that resumes inside the window joins the transcript already
+   * waiting rather than starting a second turn. 0 commits immediately, and with
+   * that loses the joining.
+   */
+  turnHoldMs: number
   sampleRate: number
   bufferSize: number
   ttsVoice: string
@@ -102,6 +133,8 @@ class VoiceEngine {
 
   private config: VoiceEngineConfig = {
     vadSensitivity: 0.5,
+    vadSilenceMs: DEFAULT_VAD_SILENCE_MS,
+    turnHoldMs: DEFAULT_TURN_HOLD_MS,
     sampleRate: 16000,
     bufferSize: 512,
     ttsVoice: 'en_GB',
@@ -125,6 +158,9 @@ class VoiceEngine {
 
   /** Backstop for a synthesis that never reports finishing. */
   private speakTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** A transcript waiting to see whether the traveller had only paused. */
+  private pendingTurn: { text: string; timer: ReturnType<typeof setTimeout> } | null = null
 
   // MARK: - Public listener API (mirrors the old Expo NativeModule.addListener)
 
@@ -184,6 +220,12 @@ class VoiceEngine {
   configure(config: Record<string, unknown>): void {
     if (typeof config.vadSensitivity === 'number') {
       this.config.vadSensitivity = Math.max(0, Math.min(1, config.vadSensitivity))
+    }
+    if (typeof config.vadSilenceMs === 'number') {
+      this.config.vadSilenceMs = Math.max(0, config.vadSilenceMs)
+    }
+    if (typeof config.turnHoldMs === 'number') {
+      this.config.turnHoldMs = Math.max(0, config.turnHoldMs)
     }
     if (typeof config.sampleRate === 'number') {
       this.config.sampleRate = config.sampleRate
@@ -400,6 +442,7 @@ class VoiceEngine {
     }
     this.isListening = false
     this.isSpeaking = false
+    this.clearPendingTurn()
     this.setState('idle')
   }
 
@@ -531,7 +574,7 @@ class VoiceEngine {
               config: {
                 frameSize: 512,
                 threshold: this.config.vadSensitivity,
-                minSilenceDurationMs: 100,
+                minSilenceDurationMs: this.config.vadSilenceMs,
               },
             },
             {
@@ -627,8 +670,9 @@ class VoiceEngine {
         this.setState('listening')
         this.emit('onInterrupted', undefined)
       }
-      this.emit('onTranscript', { text, isFinal: true })
+      this.holdTranscript(text)
     } else if (node === 'vadNode' && name === 'speechStarted') {
+      this.holdForResumedSpeech()
       this.emit('onSpeechStart', undefined)
     } else if (node === 'vadNode' && name === 'speechEnded') {
       this.emit('onSpeechEnd', undefined)
@@ -682,6 +726,69 @@ class VoiceEngine {
     return null
   }
 
+  // MARK: - Turn holding
+
+  /**
+   * Hold a transcript back before it becomes a turn, joining it to one already
+   * waiting. The VAD ends an utterance on silence alone, so a pause to think looks
+   * exactly like the end of a sentence and arrives as its own transcript — which is
+   * both how a sentence gets split in two and how an opening word goes missing,
+   * since a fragment that short usually decodes to nothing at all.
+   *
+   * An empty transcript is passed straight through. Whisper returns one for
+   * non-speech, and holding it would delay the turn without adding a word to it.
+   */
+  private holdTranscript(text: string): void {
+    const held = this.pendingTurn
+    if (held) {
+      clearTimeout(held.timer)
+      this.pendingTurn = null
+    }
+    const combined = [held?.text, text].filter(Boolean).join(' ')
+    if (this.config.turnHoldMs <= 0 || !combined) {
+      this.emit('onTranscript', { text: combined, isFinal: true })
+      return
+    }
+    this.pendingTurn = {
+      text: combined,
+      timer: setTimeout(() => this.commitTurn(), this.config.turnHoldMs),
+    }
+  }
+
+  /**
+   * Speech resumed while a transcript was waiting, so the wait becomes a backstop:
+   * the held words stay for the next transcript to join, and are committed alone
+   * only if that transcript never arrives.
+   */
+  private holdForResumedSpeech(): void {
+    const held = this.pendingTurn
+    if (!held) {
+      return
+    }
+    clearTimeout(held.timer)
+    held.timer = setTimeout(() => this.commitTurn(), HELD_TURN_BACKSTOP_MS)
+  }
+
+  /** Let the held transcript through as one turn. */
+  private commitTurn(): void {
+    const held = this.pendingTurn
+    if (!held) {
+      return
+    }
+    clearTimeout(held.timer)
+    this.pendingTurn = null
+    this.emit('onTranscript', { text: held.text, isFinal: true })
+  }
+
+  /** Drop a held transcript without it becoming a turn. */
+  private clearPendingTurn(): void {
+    if (!this.pendingTurn) {
+      return
+    }
+    clearTimeout(this.pendingTurn.timer)
+    this.pendingTurn = null
+  }
+
   private setState(state: VoiceState): void {
     this.emit('onStateChange', { state })
   }
@@ -720,8 +827,11 @@ class VoiceEngine {
     this.eventsWired = false
     this.clearSpeakWatchdog()
     this.pendingGeneration = null
+    this.clearPendingTurn()
     this.config = {
       vadSensitivity: 0.5,
+      vadSilenceMs: DEFAULT_VAD_SILENCE_MS,
+      turnHoldMs: DEFAULT_TURN_HOLD_MS,
       sampleRate: 16000,
       bufferSize: 512,
       ttsVoice: 'en_GB',

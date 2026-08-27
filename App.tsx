@@ -52,6 +52,13 @@ function VoiceAgent(): React.JSX.Element {
       appId={SWITCHBOARD_APP_ID}
       appSecret={SWITCHBOARD_APP_SECRET}
       vadSensitivity={0.5}
+      // What the traveller waits after falling silent, split between the VAD's own
+      // hold and the one above it. Both are here rather than buried in the engine
+      // because they are tuned against real speech on real hardware, and the two
+      // pull against each other: together they are also how long barge-in takes to
+      // register, since that fires on a decoded transcript rather than on the VAD.
+      vadSilenceMs={500}
+      turnHoldMs={350}
       // Below the pipeline's 0.8: the prompt's rules only hold if sampling follows
       // them.
       llmTemperature={0.4}

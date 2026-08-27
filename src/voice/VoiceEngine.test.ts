@@ -117,14 +117,18 @@ describe('VoiceEngine transport', () => {
     expect(states[states.length - 1]).toBe('speaking')
   })
 
-  it('emits onTranscript when a transcribed event arrives', () => {
+  it('emits onTranscript once the hold expires with no more speech', () => {
+    jest.useFakeTimers()
     voiceEngine.initialize('app-id', 'app-secret')
     const transcripts: Array<{ text: string; isFinal: boolean }> = []
     voiceEngine.addListener('onTranscript', (e) => transcripts.push(e))
 
     native.emit(JSON.stringify({ objectURI: 'sttNode', name: 'transcribed', data: { text: 'hi' } }))
+    expect(transcripts).toEqual([])
 
+    jest.advanceTimersByTime(350)
     expect(transcripts).toEqual([{ text: 'hi', isFinal: true }])
+    jest.useRealTimers()
   })
 
   it('barge-in: a transcript during TTS stops speaking, interrupts, then transcribes', async () => {
@@ -133,6 +137,8 @@ describe('VoiceEngine transport', () => {
     voiceEngine.addListener('onInterrupted', () => events.push('interrupted'))
     voiceEngine.addListener('onStateChange', ({ state }) => events.push(`state:${state}`))
     voiceEngine.addListener('onTranscript', ({ text }) => events.push(`transcript:${text}`))
+    // The hold is endpointing, not barge-in — this is about the order of the three.
+    voiceEngine.configure({ turnHoldMs: 0 })
 
     await voiceEngine.speak('a long answer')
     // speak() lazily starts the engine (→ listening) then synthesizes (→ speaking);
@@ -159,6 +165,16 @@ describe('VoiceEngine transport', () => {
     expect(vadNode.config.threshold).toBe(1)
   })
 
+  it('configure() feeds vadSilenceMs to the VAD node', async () => {
+    voiceEngine.initialize('app-id', 'app-secret')
+    voiceEngine.configure({ vadSilenceMs: 800 })
+    await voiceEngine.listen()
+
+    const create = findAction('createEngine')!
+    const vadNode = create.params.params.config.graph.nodes.find((n: any) => n.id === 'vadNode')
+    expect(vadNode.config.minSilenceDurationMs).toBe(800)
+  })
+
   it('useGPU follows !isSimulator in the built graph', async () => {
     native.default.isSimulator.mockReturnValue(true)
     voiceEngine.initialize('app-id', 'app-secret')
@@ -167,6 +183,106 @@ describe('VoiceEngine transport', () => {
     const create = findAction('createEngine')!
     const sttNode = create.params.params.config.graph.nodes.find((n: any) => n.id === 'sttNode')
     expect(sttNode.config.useGPU).toBe(false)
+  })
+})
+
+/**
+ * The VAD ends an utterance on silence alone, so a pause to think arrives as its own
+ * transcript. These cover the hold that puts the two halves back together.
+ */
+describe('holding a transcript before it becomes a turn', () => {
+  const transcribed = (text: string) =>
+    native.emit(JSON.stringify({ objectURI: 'sttNode', name: 'transcribed', data: { text } }))
+  const speechStarted = () =>
+    native.emit(JSON.stringify({ objectURI: 'vadNode', name: 'speechStarted' }))
+
+  /** Collect the turns that reach a listener, and start the engine. */
+  function turns(): string[] {
+    const seen: string[] = []
+    voiceEngine.initialize('app-id', 'app-secret')
+    voiceEngine.addListener('onTranscript', ({ text }) => seen.push(text))
+    return seen
+  }
+
+  beforeEach(() => {
+    jest.useFakeTimers()
+  })
+
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
+  it('joins speech that resumes inside the hold into one turn', () => {
+    const seen = turns()
+
+    transcribed('What was the best thing')
+    jest.advanceTimersByTime(200)
+    speechStarted()
+    jest.advanceTimersByTime(600)
+    transcribed('to visit in Budapest?')
+    jest.advanceTimersByTime(350)
+
+    expect(seen).toEqual(['What was the best thing to visit in Budapest?'])
+  })
+
+  it('keeps an opening word that decoded on its own', () => {
+    const seen = turns()
+
+    transcribed('What')
+    speechStarted()
+    transcribed('was the best thing to visit in Budapest?')
+    jest.advanceTimersByTime(350)
+
+    expect(seen).toEqual(['What was the best thing to visit in Budapest?'])
+  })
+
+  it('starts a second turn when the next utterance lands after the hold', () => {
+    const seen = turns()
+
+    transcribed('Where should I eat?')
+    jest.advanceTimersByTime(350)
+    transcribed('And what about tomorrow?')
+    jest.advanceTimersByTime(350)
+
+    expect(seen).toEqual(['Where should I eat?', 'And what about tomorrow?'])
+  })
+
+  it('commits held words when the speech that paused the hold never decodes', () => {
+    const seen = turns()
+
+    transcribed('Where should I eat?')
+    speechStarted()
+    jest.advanceTimersByTime(15_000)
+
+    expect(seen).toEqual(['Where should I eat?'])
+  })
+
+  it('passes an empty transcript through rather than waiting on it', () => {
+    const seen = turns()
+
+    transcribed('')
+
+    expect(seen).toEqual([''])
+  })
+
+  it('commits immediately at turnHoldMs 0', () => {
+    const seen = turns()
+    voiceEngine.configure({ turnHoldMs: 0 })
+
+    transcribed('Where should I eat?')
+
+    expect(seen).toEqual(['Where should I eat?'])
+  })
+
+  it('drops a held transcript when the session ends', async () => {
+    const seen = turns()
+    await voiceEngine.listen()
+
+    transcribed('Where should I eat?')
+    await voiceEngine.stopListening()
+    jest.advanceTimersByTime(15_000)
+
+    expect(seen).toEqual([])
   })
 })
 

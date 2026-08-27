@@ -240,6 +240,37 @@ Badges, timings and interrupt markers are held alongside the transcript by index
 rather than in it: both brains read that transcript, and neither produced a message
 about itself.
 
+## Turn taking
+
+What ends a turn is silence, and nothing else. `Silero.VAD` scores frames of audio
+and reports `speechEnded` after `vadSilenceMs` of quiet; that triggers Whisper, and
+the transcript becomes the turn. The VAD has no idea what was said, so a pause to
+think and the end of a sentence look identical to it.
+
+Two numbers, both in `App.tsx`:
+
+| Prop           | Default | What it holds                                                          |
+| -------------- | ------- | ---------------------------------------------------------------------- |
+| `vadSilenceMs` | 500     | Silence before the VAD calls the utterance over.                       |
+| `turnHoldMs`   | 350     | Silence after that, before the transcript is allowed to become a turn. |
+
+The second is what puts a split sentence back together. Speech that resumes inside
+the hold joins the transcript already waiting rather than starting a second turn, so
+"What was the best thing… to visit in Budapest?" arrives once. It is also what keeps
+an opening word that decoded on its own — a fragment that short usually decodes to
+nothing, which is how the first word of an utterance goes missing.
+
+They add up: 850 ms is what the traveller waits after falling silent, and it is also
+how long barge-in takes to register, since that fires on a decoded transcript rather
+than on the VAD. Lower them for a snappier demo and sentences split more often.
+Tuning them wants a real phone and real speech.
+
+The honest fix is a second stage that scores whether the utterance sounds finished,
+rather than a longer wait that treats every pause the same.
+[`openai-realtime-toolkit`](https://github.com/switchboard-sdk/openai-realtime-toolkit)
+does that with a SmartTurn node behind the VAD, and the Switchboard SDK already
+carries the extension.
+
 ## The persona
 
 Three prompts, all in `src/brains/types.ts`: the rules both brains are given, plus a
