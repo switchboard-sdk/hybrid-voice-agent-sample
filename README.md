@@ -279,8 +279,10 @@ Two habits survive it.
 
 The model sometimes **recites a rule instead of following it** — answering "I can
 only help with travel" to a travel question it cannot answer, or announcing that it
-can offer general guidance rather than offering any. Honest and useless. The same
-wording is what stops invented fares and clinics, so it stays.
+can offer general guidance rather than offering any. Honest and useless. The refusal
+is scoped to requests to write or entertain, and the rule says in as many words that
+a travel question it cannot answer is not one of them, but a fixed sentence in a
+prompt is an attractive thing for a small model to reach for.
 
 And a direct **"write me a poem" produces verse** whatever the prompt says: a
 request in the user's turn outranks a rule in the system prompt at this size. Hence

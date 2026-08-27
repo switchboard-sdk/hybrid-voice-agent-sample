@@ -74,8 +74,11 @@ describe('reply', () => {
     ])
   })
 
-  it('is not told it is offline, which is the on-device set', () => {
+  // Both were reported on the cloud path, and both come from rules written for the
+  // model on the phone.
+  it('is not told it is offline, nor given the fixed refusal', () => {
     expect(CLOUD_SYSTEM_PROMPT).not.toMatch(/offline/i)
+    expect(CLOUD_SYSTEM_PROMPT).not.toMatch(/I can only help with travel/)
     expect(ON_DEVICE_SYSTEM_PROMPT).toMatch(/offline/i)
   })
 
