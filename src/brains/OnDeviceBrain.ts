@@ -40,6 +40,28 @@ function stripRoleLabel(text: string): string {
 }
 
 /**
+ * Whether a reply is verse: several lines, with the first one running into the next
+ * rather than ending. A list breaks at sentence ends and prose does not break at
+ * all, so this catches what a request to write or entertain produces and nothing
+ * else — which is what makes it a usable trigger for {@link REFUSALS}.
+ */
+function looksLikeVerse(text: string): boolean {
+  if (!text.includes('\n')) {
+    return false
+  }
+  const firstLine = text.split('\n')[0].trim()
+  if (!firstLine || SENTENCE_END.test(firstLine)) {
+    return false
+  }
+  const flattened = text.replace(/\s*\n+\s*/g, ' ').trim()
+  const firstEnd = flattened.search(/[.!?…]/)
+  // A sentence carrying on past the end of its line is verse. Text that never ends a
+  // sentence at all is a reply cut off mid-list, and its first line is still worth
+  // speaking.
+  return firstEnd > firstLine.length
+}
+
+/**
  * Collapse a reply that arrived as verse or a list to its first line or sentence.
  *
  * The prompt forbids both, but a direct request outranks it at this model size and
@@ -214,7 +236,20 @@ export class OnDeviceBrain implements Brain {
       reply.text
     )
 
-    const text = trimToCompleteSentence(flattenMultilineReply(stripRoleLabel(reply.text)))
+    // Verse is the one thing the model produces that no amount of trimming turns
+    // into an answer: a line of it read aloud is worse than saying no. Refusing here
+    // rather than in the prompt is what keeps a travel question from drawing the
+    // refusal, since the code can see what the model wrote and a rule cannot.
+    const cleaned = stripRoleLabel(reply.text)
+    // Verse is the one thing the model produces that no amount of trimming turns
+    // into an answer, and a line of it read aloud is worse than saying no.
+    const answer = looksLikeVerse(cleaned)
+      ? null
+      : trimToCompleteSentence(flattenMultilineReply(cleaned))
+    // A refusal the model wrote as one bare sentence is reworded on the way out, so
+    // the traveller never hears the same one twice; one that carried its own
+    // redirect is better than anything canned and is spoken as written.
+    const text = answer === null || isBareRefusal(answer) ? this.nextRefusal() : answer
 
     // The node holds every message up to and including its reply — unless it dropped
     // the turn as too long, when it holds neither and the next turn rebuilds it.
@@ -225,11 +260,7 @@ export class OnDeviceBrain implements Brain {
     const refused = isRefusal(text)
     this.syncedMessages = droppedTheTurn || refused ? 0 : history.length + 2
 
-    return {
-      text: isBareRefusal(text) ? this.nextRefusal() : text,
-      brain: this.id,
-      processingTime,
-    }
+    return { text, brain: this.id, processingTime }
   }
 
   /** Say the refusal a different way each time it comes up. */

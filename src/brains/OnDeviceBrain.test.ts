@@ -79,7 +79,7 @@ describe('reply', () => {
     }
   )
 
-  it('speaks only the first sentence of a reply that came back as verse', async () => {
+  it('turns down a request that came back as verse rather than reading a line of it', async () => {
     jest.mocked(voiceEngine.generate).mockResolvedValueOnce({
       text: [
         'The sea, a vast and mysterious shore,',
@@ -93,8 +93,9 @@ describe('reply', () => {
 
     const reply = await brain.reply('write me a poem about the sea', [])
 
-    // A sentence of verse runs over several lines, so the line is the bound.
-    expect(reply.text).toBe('The sea, a vast and mysterious shore,')
+    // Refusing is the code's decision, not the prompt's: a rule cannot see what the
+    // model wrote, so it turns down travel questions and lets verse through.
+    expect(reply.text).toBe(ON_DEVICE_REFUSAL)
   })
 
   it('collapses a list to its first sentence', async () => {
@@ -166,6 +167,19 @@ describe('reply', () => {
     const reply = await brain.reply('hello', [])
 
     expect(reply.text).toBe('The ferry to Bequia usually leaves')
+  })
+
+  it('speaks a list cut off before it ended a sentence, rather than refusing', async () => {
+    // Verse carries a sentence past the end of its line; a fragment ends nothing at
+    // all, and its first line is still an answer.
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({
+      text: 'Harbour, market, fort\nand the coast road',
+      processingTime: 1,
+    })
+
+    const reply = await brain.reply('what is worth seeing?', [])
+
+    expect(reply.text).toBe('Harbour, market, fort')
   })
 
   it('leaves a reply that merely contains a colon alone', async () => {
