@@ -18,6 +18,8 @@ export interface EdgeSpeechProviderProps {
   sttModel?: string
   ttsVoice?: string
   vadSensitivity?: number
+  vadSilenceMs?: number
+  turnHoldMs?: number
   sampleRate?: number
   bufferSize?: number
   llmModelPath?: string
@@ -41,6 +43,8 @@ export function EdgeSpeechProvider({
   sttModel,
   ttsVoice,
   vadSensitivity,
+  vadSilenceMs,
+  turnHoldMs,
   sampleRate,
   bufferSize,
   llmModelPath,
@@ -59,6 +63,12 @@ export function EdgeSpeechProvider({
   }
   if (vadSensitivity !== undefined && (vadSensitivity < 0.0 || vadSensitivity > 1.0)) {
     throw new Error('EdgeSpeechProvider: vadSensitivity must be between 0.0 and 1.0')
+  }
+  if (vadSilenceMs !== undefined && vadSilenceMs < 0) {
+    throw new Error('EdgeSpeechProvider: vadSilenceMs cannot be negative')
+  }
+  if (turnHoldMs !== undefined && turnHoldMs < 0) {
+    throw new Error('EdgeSpeechProvider: turnHoldMs cannot be negative')
   }
   if (sttModel !== undefined && sttModel.trim() === '') {
     throw new Error('EdgeSpeechProvider: sttModel cannot be an empty string')
@@ -80,6 +90,8 @@ export function EdgeSpeechProvider({
       sttModel: sttModel ?? defaultConfig.sttModel,
       ttsVoice: ttsVoice ?? defaultConfig.ttsVoice,
       vadSensitivity: vadSensitivity ?? defaultConfig.vadSensitivity,
+      ...(vadSilenceMs !== undefined && { vadSilenceMs }),
+      ...(turnHoldMs !== undefined && { turnHoldMs }),
       ...(sampleRate !== undefined && { sampleRate }),
       ...(bufferSize !== undefined && { bufferSize }),
       ...(llmModelPath !== undefined && { llmModelPath }),
@@ -93,6 +105,8 @@ export function EdgeSpeechProvider({
     sttModel,
     ttsVoice,
     vadSensitivity,
+    vadSilenceMs,
+    turnHoldMs,
     sampleRate,
     bufferSize,
     llmModelPath,

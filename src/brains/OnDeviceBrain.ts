@@ -1,6 +1,6 @@
 import { voiceEngine, type LLMReply } from '../voice/VoiceEngine'
 import {
-  DEFAULT_SYSTEM_PROMPT,
+  ON_DEVICE_SYSTEM_PROMPT,
   cancelledError,
   type Brain,
   type BrainId,
@@ -99,7 +99,7 @@ export class OnDeviceBrain implements Brain {
   private syncedMessages = 0
 
   /** Clear the node's conversation and set the system prompt. */
-  reset(instructions: string = DEFAULT_SYSTEM_PROMPT): void {
+  reset(instructions: string = ON_DEVICE_SYSTEM_PROMPT): void {
     voiceEngine.resetConversation(instructions)
     this.syncedMessages = 0
   }

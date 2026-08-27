@@ -159,6 +159,16 @@ describe('VoiceEngine transport', () => {
     expect(vadNode.config.threshold).toBe(1)
   })
 
+  it('configure() feeds vadSilenceMs to the VAD node', async () => {
+    voiceEngine.initialize('app-id', 'app-secret')
+    voiceEngine.configure({ vadSilenceMs: 800 })
+    await voiceEngine.listen()
+
+    const create = findAction('createEngine')!
+    const vadNode = create.params.params.config.graph.nodes.find((n: any) => n.id === 'vadNode')
+    expect(vadNode.config.minSilenceDurationMs).toBe(800)
+  })
+
   it('useGPU follows !isSimulator in the built graph', async () => {
     native.default.isSimulator.mockReturnValue(true)
     voiceEngine.initialize('app-id', 'app-secret')
@@ -167,6 +177,164 @@ describe('VoiceEngine transport', () => {
     const create = findAction('createEngine')!
     const sttNode = create.params.params.config.graph.nodes.find((n: any) => n.id === 'sttNode')
     expect(sttNode.config.useGPU).toBe(false)
+  })
+})
+
+/**
+ * The VAD ends an utterance on silence alone, so a pause to think arrives as its own
+ * transcript. These cover the hold that puts the two halves back together.
+ */
+/**
+ * The VAD ends an utterance on silence alone, so a pause to think ends one exactly
+ * as the end of a sentence does. These cover the two places that is put right: the
+ * Whisper call held back before it consumes the audio, and a transcript held back
+ * after it when the sentence turned out to be still going.
+ */
+describe('holding the transcription back', () => {
+  const transcribed = (text: string) =>
+    native.emit(JSON.stringify({ objectURI: 'sttNode', name: 'transcribed', data: { text } }))
+  const speechStarted = () =>
+    native.emit(JSON.stringify({ objectURI: 'vadNode', name: 'speechStarted' }))
+  const speechEnded = () =>
+    native.emit(JSON.stringify({ objectURI: 'vadNode', name: 'speechEnded' }))
+
+  /** Collect the turns that reach a listener, and start the engine. */
+  function turns(): string[] {
+    const seen: string[] = []
+    voiceEngine.initialize('app-id', 'app-secret')
+    voiceEngine.addListener('onTranscript', ({ text }) => seen.push(text))
+    return seen
+  }
+
+  const transcribeCalls = () =>
+    sentCalls().filter((c) => c.method === 'callAction' && c.params?.actionName === 'transcribe')
+
+  beforeEach(() => {
+    jest.useFakeTimers()
+  })
+
+  afterEach(() => {
+    jest.useRealTimers()
+  })
+
+  it('leaves transcription to the engine rather than a graph edge', async () => {
+    voiceEngine.initialize('app-id', 'app-secret')
+    await voiceEngine.listen()
+
+    const { connections } = findAction('createEngine')!.params.params.config.graph
+    expect(connections).not.toContainEqual({
+      sourceNode: 'vadNode.speechEnded',
+      destinationNode: 'sttNode.transcribe',
+    })
+  })
+
+  it('asks Whisper once the hold expires with no more speech', async () => {
+    voiceEngine.initialize('app-id', 'app-secret')
+    await voiceEngine.listen()
+
+    speechEnded()
+    expect(transcribeCalls()).toHaveLength(0)
+
+    jest.advanceTimersByTime(350)
+    expect(transcribeCalls()).toHaveLength(1)
+  })
+
+  // The fragment is never decoded, so the words it holds stay in Whisper's window
+  // and are read as part of the sentence they belong to.
+  it('does not ask at all when the sentence goes on', async () => {
+    voiceEngine.initialize('app-id', 'app-secret')
+    await voiceEngine.listen()
+
+    speechEnded()
+    jest.advanceTimersByTime(200)
+    speechStarted()
+    jest.advanceTimersByTime(2_000)
+
+    expect(transcribeCalls()).toHaveLength(0)
+
+    speechEnded()
+    jest.advanceTimersByTime(350)
+    expect(transcribeCalls()).toHaveLength(1)
+  })
+
+  it('asks immediately at turnHoldMs 0', async () => {
+    voiceEngine.initialize('app-id', 'app-secret')
+    voiceEngine.configure({ turnHoldMs: 0 })
+    await voiceEngine.listen()
+
+    speechEnded()
+
+    expect(transcribeCalls()).toHaveLength(1)
+  })
+
+  it('lets a transcript through as a turn when nobody is speaking', () => {
+    const seen = turns()
+
+    transcribed('Where should I eat?')
+
+    expect(seen).toEqual(['Where should I eat?'])
+  })
+
+  // A pause long enough to survive the hold above still splits the audio, and
+  // decoding takes long enough that the rest is under way by the time the words
+  // arrive.
+  it('joins a transcript that landed while the sentence was going on', () => {
+    const seen = turns()
+
+    speechEnded()
+    speechStarted()
+    transcribed('What was the best thing')
+    jest.advanceTimersByTime(2_000)
+    expect(seen).toEqual([])
+
+    speechEnded()
+    transcribed('to visit in Budapest?')
+
+    expect(seen).toEqual(['What was the best thing to visit in Budapest?'])
+  })
+
+  it('starts a second turn for a question asked after the first was let through', () => {
+    const seen = turns()
+
+    transcribed('Where should I eat?')
+    speechStarted()
+    speechEnded()
+    transcribed('And what about tomorrow?')
+
+    expect(seen).toEqual(['Where should I eat?', 'And what about tomorrow?'])
+  })
+
+  it('lets held words through when the speech they waited on never decodes', () => {
+    const seen = turns()
+
+    speechStarted()
+    transcribed('Where should I eat?')
+    jest.advanceTimersByTime(15_000)
+
+    expect(seen).toEqual(['Where should I eat?'])
+  })
+
+  it('passes an empty transcript through rather than holding it', () => {
+    const seen = turns()
+
+    speechStarted()
+    transcribed('')
+
+    expect(seen).toEqual([''])
+  })
+
+  it('drops a held transcript and a pending ask when the session ends', async () => {
+    const seen = turns()
+    await voiceEngine.listen()
+
+    speechStarted()
+    transcribed('Where should I eat?')
+    speechEnded()
+    await voiceEngine.stopListening()
+    jest.advanceTimersByTime(15_000)
+
+    expect(seen).toEqual([])
+    expect(transcribeCalls()).toHaveLength(0)
   })
 })
 

@@ -23,7 +23,7 @@ flowchart LR
   subgraph phone["On the phone"]
     direction LR
     mic(["Mic"]) --> vad["Silero VAD"]
-    vad -- "speechEnded" --> stt["Whisper STT"]
+    vad -- "speechEnded<br/>(held)" --> stt["Whisper STT"]
     stt --> router{"route()"}
     router -- "on-device" --> llm["LlamaCpp.LLM node<br/>Llama 3.2 1B"]
     llm --> tts["Sherpa TTS"]
@@ -169,7 +169,7 @@ src/
     EdgeSpeechProvider.tsx  configuration and lifecycle
     hook.ts                 useEdgeSpeech()
   brains/                   the two interchangeable brains
-    types.ts                the Brain interface and the shared system prompt
+    types.ts                the Brain interface and the three system prompts
     OnDeviceBrain.ts        the LlamaCpp.LLM node
     CloudBrain.ts           a cloud LLM over HTTP
     router.ts               which brain answers — the file to change
@@ -240,13 +240,64 @@ Badges, timings and interrupt markers are held alongside the transcript by index
 rather than in it: both brains read that transcript, and neither produced a message
 about itself.
 
+## Turn taking
+
+What ends a turn is silence, and nothing else. `Silero.VAD` scores frames of audio
+and reports `speechEnded` after `vadSilenceMs` of quiet. The VAD has no idea what was
+said, so a pause to think and the end of a sentence look identical to it.
+
+Two numbers, both in `App.tsx`:
+
+| Prop           | Default | What it holds                                                  |
+| -------------- | ------- | -------------------------------------------------------------- |
+| `vadSilenceMs` | 500     | Silence before the VAD calls the utterance over.               |
+| `turnHoldMs`   | 350     | Silence after that, before Whisper is asked for what it heard. |
+
+**The second wait sits in front of the transcription, not behind it,** which is the
+part worth knowing. `speechEnded` does not reach `sttNode.transcribe` through the
+graph; `VoiceEngine` makes the call, and speech starting again inside the hold
+cancels it. So "What was the best thing… to visit in Budapest?" is decoded once, as
+one sentence, rather than as two fragments stitched together afterwards.
+
+Asking on the VAD edge instead is what loses the first word of an utterance.
+`transcribe` reads everything since the last call **and consumes it**, so an opening
+word alone in a short segment gets decoded to nothing and thrown away, and the
+sentence reaches the model starting from its second word. Not asking at all leaves
+those words in the window for the call that follows.
+
+A pause long enough to survive the hold still splits the audio, and Whisper takes
+long enough that the rest can be under way by the time the words come back. A
+transcript that lands while the VAD is hearing speech waits for the rest and is
+joined to it.
+
+The waits add up: 850 ms is what the traveller waits after falling silent, and it is
+also how long barge-in takes to register, since that fires on a decoded transcript
+rather than on the VAD. Lower them for a snappier demo and sentences split more
+often. Tuning them wants a real phone and real speech.
+
+The honest fix is a second stage that scores whether the utterance sounds finished,
+rather than a longer wait that treats every pause the same.
+[`openai-realtime-toolkit`](https://github.com/switchboard-sdk/openai-realtime-toolkit)
+does that with a SmartTurn node behind the VAD, and the Switchboard SDK already
+carries the extension.
+
 ## The persona
 
-Both brains are given the same system prompt, `DEFAULT_SYSTEM_PROMPT` in
-`src/brains/types.ts`, so a turn reads the same whichever one served it. It is
-written for the smaller of the two, because what the 1B on-device model can follow a
-cloud model can follow as well: numbered one-line rules rather than a paragraph, and
-**every rule phrased as something to do**.
+Three prompts, all in `src/brains/types.ts`: the rules both brains are given, plus a
+set for each. What the two models can honestly say differs — the one on the phone
+cannot look anything up and has nothing worth trusting to say about a named place,
+while the cloud model is neither offline nor short of knowledge. A single prompt has
+to be written down to the smaller of them, which leaves the cloud brain repeating
+rules that are not true of it.
+
+Shared are the rules about the shape of a spoken reply rather than what is behind
+it: one or two sentences, no lists or verse, nothing it can book or phone, answer
+the latest message. `systemPrompt()` numbers each set from 1, so a shared rule sits
+wherever it reads best in `ON_DEVICE_SYSTEM_PROMPT` and `CLOUD_SYSTEM_PROMPT`
+without either having to count.
+
+The on-device set is written for the smaller model: numbered one-line rules rather
+than a paragraph, and **every rule phrased as something to do**.
 
 That last part matters more than it sounds. A rule that states the situation — "you
 have no internet, no booking system and no live data" — buys nothing at this size; a
@@ -263,20 +314,22 @@ is what asks for short; the ceiling only stops a runaway. The temperature is als
 lower than the pipeline's default, in `App.tsx`: rules only hold if the sampling is
 conservative enough to follow them.
 
-### What the prompt does not fix
+### What the on-device prompt does not fix
 
 Two habits survive it.
 
 The model sometimes **recites a rule instead of following it** — answering "I can
 only help with travel" to a travel question it cannot answer, or announcing that it
-can offer general guidance rather than offering any. Honest and useless. The same
-wording is what stops invented fares and clinics, so it stays.
+can offer general guidance rather than offering any. Honest and useless. The refusal
+is scoped to requests to write or entertain, and the rule says in as many words that
+a travel question it cannot answer is not one of them, but a fixed sentence in a
+prompt is an attractive thing for a small model to reach for.
 
 And a direct **"write me a poem" produces verse** whatever the prompt says: a
 request in the user's turn outranks a rule in the system prompt at this size. Hence
 the guard in `OnDeviceBrain` — the prompt asks, the code decides.
 
-Neither habit appears on the cloud brain with the same prompt.
+Both are the model rather than the wording — neither shows up on the cloud path.
 
 ## The two brains
 

@@ -61,8 +61,39 @@ const FIRST_TOKEN_TIMEOUT_MS = 8_000
  */
 const SPEAK_TIMEOUT_MS = 30_000
 
+/**
+ * The two ends of the endpointing budget, and the only defence against a pause
+ * mid-sentence being read as the end of a turn — the VAD scores frames of audio and
+ * knows nothing of what was said. Together they are what the traveller waits after
+ * falling silent, so raising either buys fewer split turns at the cost of a slower
+ * reply.
+ */
+const DEFAULT_VAD_SILENCE_MS = 500
+const DEFAULT_TURN_HOLD_MS = 350
+
+/**
+ * Ceiling on a transcript waiting for the rest of its sentence, in ms. It waits for
+ * the speech that is under way to be transcribed so the two can be joined; if that
+ * never arrives — a cough, a door, anything the VAD hears and Whisper does not —
+ * this lets through what is already there rather than stranding the turn.
+ */
+const HELD_TURN_BACKSTOP_MS = 15_000
+
 interface VoiceEngineConfig {
   vadSensitivity: number
+  /**
+   * Silence that ends an utterance, in ms. The VAD hears silence and nothing else,
+   * so this is the whole of what tells a pause to think from the end of a sentence:
+   * too short splits a sentence in two, too long makes every reply wait.
+   */
+  vadSilenceMs: number
+  /**
+   * Further silence held after the VAD's own, in ms, before Whisper is asked for
+   * the utterance. Speech starting again inside the window cancels the call, so the
+   * rest of the sentence is decoded along with it rather than separately. 0 asks
+   * immediately, which is the behaviour of a `speechEnded → transcribe` edge.
+   */
+  turnHoldMs: number
   sampleRate: number
   bufferSize: number
   ttsVoice: string
@@ -102,6 +133,8 @@ class VoiceEngine {
 
   private config: VoiceEngineConfig = {
     vadSensitivity: 0.5,
+    vadSilenceMs: DEFAULT_VAD_SILENCE_MS,
+    turnHoldMs: DEFAULT_TURN_HOLD_MS,
     sampleRate: 16000,
     bufferSize: 512,
     ttsVoice: 'en_GB',
@@ -125,6 +158,19 @@ class VoiceEngine {
 
   /** Backstop for a synthesis that never reports finishing. */
   private speakTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** Whisper call held back while the sentence may still be going. */
+  private transcribeTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** A transcript waiting to see whether the traveller had only paused. */
+  private pendingTurn: { text: string; timer: ReturnType<typeof setTimeout> } | null = null
+
+  /**
+   * Whether the VAD is hearing speech right now. A transcript arrives well after the
+   * silence that ended it — Whisper has to decode first — so by the time one lands
+   * the traveller may already be a word into the rest of the sentence.
+   */
+  private speechActive = false
 
   // MARK: - Public listener API (mirrors the old Expo NativeModule.addListener)
 
@@ -184,6 +230,12 @@ class VoiceEngine {
   configure(config: Record<string, unknown>): void {
     if (typeof config.vadSensitivity === 'number') {
       this.config.vadSensitivity = Math.max(0, Math.min(1, config.vadSensitivity))
+    }
+    if (typeof config.vadSilenceMs === 'number') {
+      this.config.vadSilenceMs = Math.max(0, config.vadSilenceMs)
+    }
+    if (typeof config.turnHoldMs === 'number') {
+      this.config.turnHoldMs = Math.max(0, config.turnHoldMs)
     }
     if (typeof config.sampleRate === 'number') {
       this.config.sampleRate = config.sampleRate
@@ -400,6 +452,9 @@ class VoiceEngine {
     }
     this.isListening = false
     this.isSpeaking = false
+    this.speechActive = false
+    this.clearPendingTurn()
+    this.clearTranscribeTimer()
     this.setState('idle')
   }
 
@@ -506,7 +561,11 @@ class VoiceEngine {
    *   inputNode → multiChannelToMono → busSplitter → vadNode (SileroVAD.VAD)
    *                                                 → sttNode (Whisper.STT)
    *   ttsNode (Sherpa.TTS) → monoToMultiChannel → outputNode
-   *   data: vadNode.speechEnded → sttNode.transcribe
+   *
+   * There is deliberately no data connection from `vadNode.speechEnded` to
+   * `sttNode.transcribe`. Transcription is driven from `dispatch` instead, so the
+   * call can be held back while the sentence may still be going — see
+   * {@link scheduleTranscribe}.
    */
   private buildGraphConfig(): object {
     // Whisper's Metal GPU path crashes in the iOS Simulator, so gate on it.
@@ -531,7 +590,7 @@ class VoiceEngine {
               config: {
                 frameSize: 512,
                 threshold: this.config.vadSensitivity,
-                minSilenceDurationMs: 100,
+                minSilenceDurationMs: this.config.vadSilenceMs,
               },
             },
             {
@@ -568,7 +627,6 @@ class VoiceEngine {
             { sourceNode: 'multiChannelToMonoNode', destinationNode: 'busSplitterNode' },
             { sourceNode: 'busSplitterNode', destinationNode: 'vadNode' },
             { sourceNode: 'busSplitterNode', destinationNode: 'sttNode' },
-            { sourceNode: 'vadNode.speechEnded', destinationNode: 'sttNode.transcribe' },
             { sourceNode: 'ttsNode', destinationNode: 'monoToMultiChannelNode' },
             { sourceNode: 'monoToMultiChannelNode', destinationNode: 'outputNode' },
           ],
@@ -627,10 +685,16 @@ class VoiceEngine {
         this.setState('listening')
         this.emit('onInterrupted', undefined)
       }
-      this.emit('onTranscript', { text, isFinal: true })
+      this.holdTranscript(text)
     } else if (node === 'vadNode' && name === 'speechStarted') {
+      this.speechActive = true
+      // The sentence goes on, so whatever is buffered is not a turn yet. The next
+      // speechEnded asks for all of it in one call.
+      this.clearTranscribeTimer()
       this.emit('onSpeechStart', undefined)
     } else if (node === 'vadNode' && name === 'speechEnded') {
+      this.speechActive = false
+      this.scheduleTranscribe()
       this.emit('onSpeechEnd', undefined)
     } else if (node === 'ttsNode' && name === 'finished') {
       if (!this.isSpeaking) {
@@ -682,6 +746,92 @@ class VoiceEngine {
     return null
   }
 
+  // MARK: - Turn holding
+
+  /**
+   * Ask Whisper for everything it has heard since the last time it was asked, after
+   * `turnHoldMs` in which speech starting again cancels the call.
+   *
+   * This is why the graph has no `speechEnded → transcribe` edge. The VAD ends an
+   * utterance on silence alone, so a pause to think ends one exactly as the end of a
+   * sentence does; transcribing on that edge decodes the fragment and, because the
+   * call consumes the audio it read, throws the words away when the fragment was too
+   * short to decode. Holding the call instead leaves the audio in Whisper's window,
+   * so the rest of the sentence carries it along.
+   */
+  private scheduleTranscribe(): void {
+    this.clearTranscribeTimer()
+    if (this.config.turnHoldMs <= 0) {
+      this.transcribe()
+      return
+    }
+    this.transcribeTimer = setTimeout(() => {
+      this.transcribeTimer = null
+      this.transcribe()
+    }, this.config.turnHoldMs)
+  }
+
+  private transcribe(): void {
+    if (!this.engineId) {
+      return
+    }
+    this.ensureClient().callAction('sttNode', 'transcribe', {})
+  }
+
+  private clearTranscribeTimer(): void {
+    if (!this.transcribeTimer) {
+      return
+    }
+    clearTimeout(this.transcribeTimer)
+    this.transcribeTimer = null
+  }
+
+  /**
+   * Let a transcript through as a turn, unless the traveller is mid-sentence again.
+   *
+   * The hold above covers a pause short enough to be caught before Whisper is asked.
+   * A longer one is only visible afterwards: decoding takes long enough that speech
+   * can resume while it runs, and then the words already decoded are the first half
+   * of a sentence whose second half is still being spoken. Those wait for it, under
+   * the backstop.
+   */
+  private holdTranscript(text: string): void {
+    const held = this.pendingTurn
+    if (held) {
+      clearTimeout(held.timer)
+      this.pendingTurn = null
+    }
+    const combined = [held?.text, text].filter(Boolean).join(' ')
+    if (!this.speechActive || !combined) {
+      this.emit('onTranscript', { text: combined, isFinal: true })
+      return
+    }
+    this.pendingTurn = {
+      text: combined,
+      timer: setTimeout(() => this.commitTurn(), HELD_TURN_BACKSTOP_MS),
+    }
+  }
+
+  /** Let the held transcript through as one turn. */
+  private commitTurn(): void {
+    const held = this.pendingTurn
+    if (!held) {
+      return
+    }
+    clearTimeout(held.timer)
+    this.pendingTurn = null
+    this.emit('onTranscript', { text: held.text, isFinal: true })
+  }
+
+  /** Drop a held transcript without it becoming a turn. */
+  private clearPendingTurn(): void {
+    if (!this.pendingTurn) {
+      return
+    }
+    clearTimeout(this.pendingTurn.timer)
+    this.pendingTurn = null
+  }
+
   private setState(state: VoiceState): void {
     this.emit('onStateChange', { state })
   }
@@ -720,8 +870,13 @@ class VoiceEngine {
     this.eventsWired = false
     this.clearSpeakWatchdog()
     this.pendingGeneration = null
+    this.clearPendingTurn()
+    this.speechActive = false
+    this.clearTranscribeTimer()
     this.config = {
       vadSensitivity: 0.5,
+      vadSilenceMs: DEFAULT_VAD_SILENCE_MS,
+      turnHoldMs: DEFAULT_TURN_HOLD_MS,
       sampleRate: 16000,
       bufferSize: 512,
       ttsVoice: 'en_GB',
