@@ -63,7 +63,7 @@ context is kept in step with that transcript.
 ## Setup
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/switchboard-sdk/hybrid-voice-agent-sample.git
 cd hybrid-voice-agent-sample
 npm install                 # downloads ~2.3 GB of Switchboard frameworks, takes a while
 npm run ios -- --device     # prebuilds the iOS project, then builds and runs it

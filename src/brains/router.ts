@@ -24,7 +24,7 @@ export const onDeviceBrain = new OnDeviceBrain()
  * The cloud LLM, reached through Switchboard's chat endpoint. It takes the same
  * app ID and secret that start the SDK, so there is no second credential to set
  * up and no provider key in the bundle. The URL falls back to production; point
- * it elsewhere to run against staging or a proxy of your own.
+ * it elsewhere to run against a proxy of your own.
  */
 export const cloudBrain = new CloudBrain({
   appId: process.env.EXPO_PUBLIC_SWITCHBOARD_APP_ID || undefined,
