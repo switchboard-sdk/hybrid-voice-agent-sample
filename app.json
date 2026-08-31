@@ -11,7 +11,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.switchboard.hybridvoiceagent",
-      "buildNumber": "1",
+      "buildNumber": "2",
       "infoPlist": {
         "NSMicrophoneUsageDescription": "This app needs microphone access so you can talk to the voice agent",
         "ITSAppUsesNonExemptEncryption": false
