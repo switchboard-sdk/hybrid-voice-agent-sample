@@ -22,8 +22,7 @@ import {
  *
  * Which model answers is the endpoint's business, not ours — it is not named in
  * the request and can change without this file changing. Override the URL with
- * EXPO_PUBLIC_CLOUD_LLM_BASE_URL; staging is at
- * `https://staging.api.switchboard.audio/chat`.
+ * EXPO_PUBLIC_CLOUD_LLM_BASE_URL to reach the endpoint through a host of your own.
  */
 const DEFAULT_BASE_URL = 'https://api.switchboard.audio/chat'
 
