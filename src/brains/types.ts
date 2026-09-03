@@ -93,6 +93,15 @@ export interface AgentProfile {
   readonly id: string
   /** The conversation screen's heading. */
   readonly title: string
+  /**
+   * What the agent is, in a sentence or two — the line both prompts open with.
+   *
+   * This is the part a user types. Both prompts below are built from it, so it is
+   * kept as its own field rather than only in the assembled text: the editor
+   * pre-fills from here, and re-parsing a finished prompt to find it would be
+   * guesswork.
+   */
+  readonly brief: string
   readonly onDevicePrompt: string
   readonly cloudPrompt: string
   /**

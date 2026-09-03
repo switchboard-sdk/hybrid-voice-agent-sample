@@ -21,7 +21,14 @@ import {
 } from '../brains'
 import { OFFLINE_NOTICE, useOnline } from '../connectivity'
 import { describeError, isCancelled, type ErrorDescription } from '../errors'
-import { PROFILES, nextProfileId, setProfile } from '../profiles'
+import {
+  availableProfiles,
+  nextProfileId,
+  setProfile,
+  setTypedBrief,
+  typedBrief,
+} from '../profiles'
+import { PromptScreen } from './PromptScreen'
 import { useEdgeSpeech, type VoiceState } from '../voice'
 
 /** What the transcript itself does not carry: who answered, and how long it took. */
@@ -141,6 +148,7 @@ export function ConversationScreen({
   // Seconds the current turn has been thinking. The cloud path can spend two
   // timeouts and a retry on one turn, which needs to be legible while it happens.
   const [thinkingSeconds, setThinkingSeconds] = useState(0)
+  const [editingPrompt, setEditingPrompt] = useState(false)
 
   const online = useOnline()
   // The brain the user picked, and the one that will answer. They differ only when
@@ -381,6 +389,13 @@ export function ConversationScreen({
     setProfile(nextProfileId())
   }
 
+  const editPrompt = () => {
+    if (switchingBlocked) {
+      return
+    }
+    setEditingPrompt(true)
+  }
+
   const switchBrain = () => {
     if (!otherBrain) {
       return
@@ -403,6 +418,19 @@ export function ConversationScreen({
     brains.forEach((candidate) => candidate.reset())
   }
 
+  // Every hook above has run, so this is a safe place to swap the whole screen.
+  // Saving changes the profile, which remounts this component and takes the
+  // editor's own state with it — there is nothing to close.
+  if (editingPrompt) {
+    return (
+      <PromptScreen
+        initialBrief={typedBrief() ?? profile.brief}
+        onSave={setTypedBrief}
+        onCancel={() => setEditingPrompt(false)}
+      />
+    )
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
@@ -422,17 +450,21 @@ export function ConversationScreen({
             </TouchableOpacity>
           )}
         </View>
-        {PROFILES.length > 1 && (
-          <View style={[styles.headerRow, styles.profileRow]}>
-            <Text style={styles.profileLabel}>Agent</Text>
+        <View style={[styles.headerRow, styles.profileRow]}>
+          <TouchableOpacity onPress={editPrompt} disabled={switchingBlocked}>
+            <Text style={[styles.profileButton, switchingBlocked && styles.profileButtonDisabled]}>
+              Edit prompt
+            </Text>
+          </TouchableOpacity>
+          {availableProfiles().length > 1 && (
             <TouchableOpacity onPress={switchProfile} disabled={switchingBlocked}>
               <Text
                 style={[styles.profileButton, switchingBlocked && styles.profileButtonDisabled]}>
                 {profile.title} ›
               </Text>
             </TouchableOpacity>
-          </View>
-        )}
+          )}
+        </View>
       </View>
 
       {failure && (
@@ -470,8 +502,9 @@ export function ConversationScreen({
             <Text style={styles.emptyTitle}>Ask a question</Text>
             <Text style={styles.emptyBody}>
               {modelReady
-                ? 'The agent can answer on the phone itself, so it keeps working where there is no signal. Ask it something like:'
-                : 'The model is not on this phone, so replies come from the cloud for now. Ask it something like:'}
+                ? 'The agent can answer on the phone itself, so it keeps working where there is no signal.'
+                : 'The model is not on this phone, so replies come from the cloud for now.'}
+              {profile.examplePrompts.length > 0 && ' Ask it something like:'}
             </Text>
             {profile.examplePrompts.map((prompt) => (
               <Text key={prompt} style={styles.emptyPrompt}>
@@ -639,10 +672,6 @@ const styles = StyleSheet.create({
     borderTopWidth: 1,
     borderTopColor: '#f0f0f0',
     paddingTop: 8,
-  },
-  profileLabel: {
-    fontSize: 12,
-    color: '#666',
   },
   profileButton: {
     fontSize: 12,

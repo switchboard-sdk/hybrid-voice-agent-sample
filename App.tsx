@@ -7,7 +7,7 @@ import { ModelDownloadScreen } from './src/screens/ModelDownloadScreen'
 import { SetupScreen } from './src/screens/SetupScreen'
 import { brains } from './src/brains'
 import { useModel } from './src/model'
-import { useProfile } from './src/profiles'
+import { restoreTypedBrief, useProfile } from './src/profiles'
 
 // Credentials from environment variables (see .env.example)
 const SWITCHBOARD_APP_ID = process.env.EXPO_PUBLIC_SWITCHBOARD_APP_ID ?? ''
@@ -44,6 +44,12 @@ function VoiceAgent(): React.JSX.Element {
   const model = useModel()
   const profile = useProfile()
   const [cloudOnly, setCloudOnly] = useState(false)
+
+  // A brief typed in an earlier session, read back once. Reading a file is not
+  // something an import should do, so it happens here rather than at module load.
+  useEffect(() => {
+    restoreTypedBrief()
+  }, [])
 
   // Both brains wear the profile before anything can ask them for a turn. The
   // router constructs them on the profile a build starts on, so this is only for

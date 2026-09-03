@@ -139,6 +139,7 @@ src/
   screens/                  UI
     ConversationScreen.tsx  the whole app: transcript, state, per-turn badges
     ModelDownloadScreen.tsx the first launch: the download, or a way past it
+    PromptScreen.tsx        typing the agent's brief
     SetupScreen.tsx         what a clone with no credentials sees
   connectivity.ts           whether there is a connection, and the spoken notice
   errors.ts                 the only place a failure code becomes a sentence
@@ -221,13 +222,38 @@ EXPO_PUBLIC_AGENT_PROFILE=telco
 No other file changes. An unknown id warns and falls back rather than shipping a
 build with no agent at all.
 
-There is also a picker in the header, so one build can be shown as either agent.
-**Switching resets everything** — the transcript, the badges, the picked brain and
-both brains' own state. A profile is a different product rather than a new topic,
-so there is nothing worth carrying across, and the screen is simply remounted.
-The picker is refused mid-turn, since tearing the screen down under a reply that
-is still arriving would leave the mic open and the old agent talking over the new
-one.
+### Typing one instead
+
+**Edit prompt** in the header opens a field for the agent's brief — what it is and
+who it is speaking to. That is the part a user types; the rules for a spoken reply
+are added around it, and the screen shows both assembled prompts so nothing is
+hidden. The brief is saved to the Documents directory, so it survives a relaunch.
+
+The typed text is not used verbatim, and that is deliberate in two ways:
+
+- **It cannot go to both brains as written.** The on-device set has to say it is
+  offline and cannot look anything up; a cloud model given that line announces it
+  on every turn. So each brain's prompt is composed separately.
+- **A brief with no rules produces a bad agent at 1B.** Without the brevity rule
+  the model answers a broad question with a list, which the code then throws away
+  after the first sentence — nine seconds of waiting for one sentence that was
+  ready in about one.
+
+What a typed brief gives up is sharpness. Its rules are general, so they cannot
+name the particular things this agent must not invent, the way the written profiles
+name a fare or a data allowance. A profile in `src/profiles.ts` is the better
+answer for anything you ship; typing one is for trying an idea without a rebuild.
+
+Saving an empty field clears the typed agent and goes back to a built-in one.
+
+### Switching
+
+The header also cycles between the profiles that exist. **Switching resets
+everything** — the transcript, the badges, the picked brain and both brains' own
+state. A profile is a different product rather than a new topic, so there is
+nothing worth carrying across, and the screen is simply remounted. Both controls
+are refused mid-turn, since tearing the screen down under a reply that is still
+arriving would leave the mic open and the old agent talking over the new one.
 
 Two things to know before writing one:
 

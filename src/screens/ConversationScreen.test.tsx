@@ -129,8 +129,44 @@ describe('ConversationScreen', () => {
       expect(activeProfile()).toBe(TELCO_PROFILE)
     })
 
+    it('opens the prompt editor on the active brief, and wears what is saved', () => {
+      renderScreen()
+
+      fireEvent.press(screen.getByText('Edit prompt'))
+      const field = screen.getByLabelText('Agent brief')
+      expect(field.props.value).toBe(TRAVEL_PROFILE.brief)
+
+      fireEvent.changeText(field, 'You are the voice of a bicycle repair shop.')
+      fireEvent.press(screen.getByText('Save'))
+
+      expect(activeProfile().id).toBe('custom')
+      expect(activeProfile().brief).toBe('You are the voice of a bicycle repair shop.')
+    })
+
+    it('leaves the profile alone when the editor is cancelled', () => {
+      renderScreen()
+
+      fireEvent.press(screen.getByText('Edit prompt'))
+      fireEvent.changeText(screen.getByLabelText('Agent brief'), 'something else')
+      fireEvent.press(screen.getByText('Cancel'))
+
+      expect(activeProfile()).toBe(TRAVEL_PROFILE)
+      expect(screen.getByText(TRAVEL_PROFILE.title)).toBeTruthy()
+    })
+
     // A profile change tears the screen down; doing that under a reply still
     // arriving would leave the mic open and the old agent talking over the new one.
+    it('refuses to open the editor while a turn is in flight', async () => {
+      jest.mocked(onDeviceBrain.reply).mockReturnValue(new Promise(() => {}))
+      renderScreen()
+      await startTalking()
+      await say('hello')
+
+      fireEvent.press(screen.getByText('Edit prompt'))
+
+      expect(screen.queryByLabelText('Agent brief')).toBeNull()
+    })
+
     it('refuses to switch while a turn is in flight', async () => {
       jest.mocked(onDeviceBrain.reply).mockReturnValue(new Promise(() => {}))
       renderScreen()

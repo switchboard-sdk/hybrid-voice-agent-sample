@@ -165,6 +165,19 @@ user or the subject, so it belongs to a profile. `systemPrompt()` numbers each s
 from 1, so a rule sits wherever it reads best in either prompt without either
 having to count.
 
+**A brief the user types gets a third, generic set.** `customProfile()` builds both
+prompts from the typed text plus `genericOnDeviceRules()` and
+`genericCloudRules()` — the same shape as the written sets, generalised from them.
+They are necessarily blunter: a general rule cannot name the things this particular
+agent must not invent, which is most of what makes the written sets work. That is
+the cost of typing a prompt rather than writing a profile, and `PromptScreen` says
+so on the screen rather than leaving it to be discovered on a phone.
+
+The typed text is never sent verbatim to both brains. It cannot be: the on-device
+set has to say it is offline, and a cloud model told that announces it every turn.
+So the brief is the persona line and each brain's rules are composed around it,
+with both assembled prompts shown in the editor so the composition is visible.
+
 The two sets pull in opposite directions, and that is the point of having two. The
 on-device rules exist to stop a model inventing what it cannot know; the cloud rules
 exist to stop one hedging over what it does. Asked what a day in Iceland costs, the
