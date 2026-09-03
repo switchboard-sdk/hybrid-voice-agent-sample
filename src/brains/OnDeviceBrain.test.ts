@@ -1,6 +1,10 @@
 import { OnDeviceBrain } from './OnDeviceBrain'
 import { voiceEngine, type LLMReply } from '../voice/VoiceEngine'
-import { ON_DEVICE_REFUSAL, type ConversationMessage } from './types'
+import { TELCO_PROFILE, TRAVEL_PROFILE } from '../profiles'
+import type { ConversationMessage } from './types'
+
+/** The profile's canonical refusal — the wording the code treats as the boundary. */
+const ON_DEVICE_REFUSAL = TRAVEL_PROFILE.refusals[0]
 
 jest.mock('../voice/VoiceEngine', () => ({
   __esModule: true,
@@ -19,7 +23,7 @@ let brain: OnDeviceBrain
 beforeEach(() => {
   jest.clearAllMocks()
   // The sync counter is per brain, so a fresh one starts from a clean node.
-  brain = new OnDeviceBrain()
+  brain = new OnDeviceBrain(TRAVEL_PROFILE)
 })
 
 describe('reply', () => {
@@ -249,7 +253,7 @@ describe('reply', () => {
 
   it('keeps its sync counter to itself', async () => {
     await brain.reply('hello', [])
-    const other = new OnDeviceBrain()
+    const other = new OnDeviceBrain(TRAVEL_PROFILE)
 
     // A second brain has ingested nothing, so the same history is a divergence
     // for it even though the first brain is in sync.
@@ -428,14 +432,57 @@ describe('cancellation', () => {
 })
 
 describe('reset', () => {
-  it('clears the node and forces the next turn to replay', async () => {
+  it('clears the node and forces the next turn to replay, keeping the prompt', async () => {
     await brain.reply('hello', [])
     jest.clearAllMocks()
 
-    brain.reset('be brief')
-    expect(voiceEngine.resetConversation).toHaveBeenCalledWith('be brief')
+    brain.reset()
+    // No argument: Clear must not quietly put a built-in prompt back over the
+    // profile the app is wearing.
+    expect(voiceEngine.resetConversation).toHaveBeenCalledWith()
 
     await brain.reply('again', [user('hello'), assistant('reply')])
     expect(voiceEngine.resetConversation).toHaveBeenCalledTimes(2)
+  })
+})
+
+describe('applyProfile', () => {
+  it('writes the new prompt and forces the next turn to replay', async () => {
+    await brain.reply('hello', [])
+    jest.clearAllMocks()
+
+    brain.applyProfile(TELCO_PROFILE)
+    expect(voiceEngine.resetConversation).toHaveBeenCalledWith(TELCO_PROFILE.onDevicePrompt)
+
+    await brain.reply('again', [user('hello'), assistant('reply')])
+    expect(voiceEngine.resetConversation).toHaveBeenCalledTimes(2)
+  })
+
+  it('refuses in the new profile words, not the old ones', async () => {
+    brain.applyProfile(TELCO_PROFILE)
+    jest.mocked(voiceEngine.generate).mockResolvedValueOnce({
+      text: ['The sun sets low, a fiery glow,', 'Painting the horizon with colors slow.'].join(
+        '\n'
+      ),
+      processingTime: 1,
+    })
+
+    const reply = await brain.reply('write me a poem', [])
+
+    expect(reply.text).toBe(TELCO_PROFILE.refusals[0])
+    expect(reply.text).not.toMatch(/travel/i)
+  })
+
+  it('recognises the new profile refusal, so it stays out of the replay', async () => {
+    brain.applyProfile(TELCO_PROFILE)
+    jest
+      .mocked(voiceEngine.generate)
+      .mockResolvedValueOnce({ text: TELCO_PROFILE.refusals[0], processingTime: 1 })
+    const refused = await brain.reply('who won in 1998?', [])
+
+    await brain.reply('what next?', [user('who won in 1998?'), assistant(refused.text)])
+
+    const calls = jest.mocked(voiceEngine.generate).mock.calls
+    expect(calls[calls.length - 1][0]).not.toMatch(/mobile and broadband/i)
   })
 })

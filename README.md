@@ -129,7 +129,7 @@ src/
     EdgeSpeechProvider.tsx  configuration and lifecycle
     hook.ts                 useEdgeSpeech()
   brains/                   the two interchangeable brains
-    types.ts                the Brain interface and the three system prompts
+    types.ts                the Brain interface and the AgentProfile it wears
     OnDeviceBrain.ts        the LlamaCpp.LLM node
     CloudBrain.ts           a cloud LLM over HTTP
     router.ts               which brain answers — the file to change
@@ -142,6 +142,7 @@ src/
     SetupScreen.tsx         what a clone with no credentials sees
   connectivity.ts           whether there is a connection, and the spoken notice
   errors.ts                 the only place a failure code becomes a sentence
+  profiles.ts               the agent profiles, and which one this build wears
 modules/edgespeech-native/  the only native code: a C++ TurboModule + podspec
 app.config.js               layers the signing team from .env onto app.json
 frameworks.lock.json        the SDK builds this commit was tested against
@@ -172,7 +173,8 @@ interface Brain {
     history: ConversationMessage[],
     signal?: AbortSignal
   ): Promise<BrainReply>
-  reset(instructions?: string): void
+  applyProfile(profile: AgentProfile): void
+  reset(): void
 }
 ```
 
@@ -202,6 +204,45 @@ instead.
 does beyond the interface, and
 [Conversation history](docs/DESIGN.md#conversation-history) covers how the
 on-device node's own context is kept in step with the transcript.
+
+## Agent profiles
+
+The app is not tied to one business. Everything that is — the heading, the two
+system prompts, what a refusal sounds like, and the examples on the empty screen
+— lives in an `AgentProfile` in [`src/profiles.ts`](src/profiles.ts). Two ship:
+`travel` and `telco`.
+
+White-labelling means adding one there and naming its id:
+
+```
+EXPO_PUBLIC_AGENT_PROFILE=telco
+```
+
+No other file changes. An unknown id warns and falls back rather than shipping a
+build with no agent at all.
+
+There is also a picker in the header, so one build can be shown as either agent.
+**Switching resets everything** — the transcript, the badges, the picked brain and
+both brains' own state. A profile is a different product rather than a new topic,
+so there is nothing worth carrying across, and the screen is simply remounted.
+The picker is refused mid-turn, since tearing the screen down under a reply that
+is still arriving would leave the mic open and the old agent talking over the new
+one.
+
+Two things to know before writing one:
+
+- **The two prompts must stay separate.** One prompt for both models is the bug it
+  looks like a saving: the on-device set opens by saying it is offline, and a cloud
+  model given that line announces it on every turn.
+- **The on-device rules are tuned, not generic.** What carries over to a new domain
+  is the shape — instructions rather than descriptions, refuse and redirect in one
+  sentence, a worked example per rule. The rules themselves still want a pass on a
+  real phone. [The persona](docs/DESIGN.md#the-persona) explains why each of those
+  holds.
+
+The refusal wordings live in the profile for the same reason: `OnDeviceBrain` says
+one in code rather than asking the prompt for it, so a sentence left over from
+another domain would contradict the prompt it shipped with.
 
 ## Cloud credentials
 
@@ -242,7 +283,8 @@ The prompt forbids exactly that; it breaks the rules anyway. Asked how far somet
 is it gives a walking time. Asked about a place it has no knowledge of it describes
 one, and will put a town several hundred kilometres from where it belongs. Asked
 nothing at all — a "thanks" at the end of a conversation — it may decide where the
-traveller is standing and what they are about to do.
+user is standing and what they are about to do. The examples are from the travel
+profile; the behaviour is the model's, so expect it whatever profile you write.
 
 Rewording the rules does not reach it, and neither does sampling at temperature 0.
 A code guard could catch the figures, since a price or a distance is detectable

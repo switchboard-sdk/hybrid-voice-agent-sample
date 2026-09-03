@@ -1,8 +1,7 @@
 import { voiceEngine, type LLMReply } from '../voice/VoiceEngine'
 import {
-  ON_DEVICE_REFUSAL,
-  ON_DEVICE_SYSTEM_PROMPT,
   cancelledError,
+  type AgentProfile,
   type Brain,
   type BrainId,
   type BrainReply,
@@ -43,7 +42,7 @@ function stripRoleLabel(text: string): string {
  * Whether a reply is verse: several lines, with the first one running into the next
  * rather than ending. A list breaks at sentence ends and prose does not break at
  * all, so this catches what a request to write or entertain produces and nothing
- * else — which is what makes it a usable trigger for {@link REFUSALS}.
+ * else — which is what makes it a usable trigger for a refusal.
  */
 function looksLikeVerse(text: string): boolean {
   if (!text.includes('\n')) {
@@ -87,23 +86,6 @@ function flattenMultilineReply(text: string): string {
     : firstSentence
 }
 
-/**
- * What a refusal is allowed to sound like. The prompt asks for the first of these
- * word for word, because a 1B model cannot be relied on to phrase one itself — but
- * a reply with one possible wording has no gradient, and a traveller who hears the
- * same sentence twice reads it as a broken app rather than a boundary. So the node
- * writes one and the app says the next in turn.
- *
- * Recognising them is also what keeps them out of the replay, which is the half
- * that matters more: see {@link withoutRefusedExchanges}.
- */
-const REFUSALS = [
-  ON_DEVICE_REFUSAL,
-  'Travel is the only thing I can help with, I am afraid.',
-  'That one is outside what I can do — travel is my subject.',
-  'I only handle travel questions.',
-] as const
-
 const forComparison = (text: string): string =>
   text
     .trim()
@@ -111,15 +93,13 @@ const forComparison = (text: string): string =>
     .replace(/[.!]+$/, '')
 
 /**
- * The opening of the refusal the prompt asks for, matched as a prefix so a reply
- * that ran on — "I can only help with travel questions" — is still recognised.
- * Missing one is silent: the wording would go back into the node's context and start
- * the loop this exists to prevent.
+ * Whether a reply is a refusal, matched against the profile's canonical wording as
+ * a prefix so a reply that ran on — "I can only help with travel questions" — is
+ * still recognised. Missing one is silent: the wording would go back into the
+ * node's context and start the loop this exists to prevent.
  */
-const REFUSAL_OPENING = forComparison(ON_DEVICE_REFUSAL)
-
-function isRefusal(text: string): boolean {
-  return forComparison(text).startsWith(REFUSAL_OPENING) || isBareRefusal(text)
+function isRefusal(text: string, refusals: readonly string[]): boolean {
+  return forComparison(text).startsWith(forComparison(refusals[0])) || isBareRefusal(text, refusals)
 }
 
 /**
@@ -128,27 +108,30 @@ function isRefusal(text: string): boolean {
  * and that is a better reply than any canned sentence, so it is left to speak for
  * itself. Both kinds are kept out of the replay just the same.
  */
-function isBareRefusal(text: string): boolean {
+function isBareRefusal(text: string, refusals: readonly string[]): boolean {
   const value = forComparison(text)
-  return REFUSALS.some((refusal) => forComparison(refusal) === value)
+  return refusals.some((refusal) => forComparison(refusal) === value)
 }
 
 /**
  * Leave a refused exchange out of what the node is replayed.
  *
  * A canned refusal in the node's own context is the likeliest thing for it to write
- * next, and two of them are enough to make it the answer to everything — a travel
- * question included. The transcript on screen keeps them, because the traveller
- * heard them; the model does not read them back.
+ * next, and two of them are enough to make it the answer to everything — a question
+ * it should have answered included. The transcript on screen keeps them, because
+ * the user heard them; the model does not read them back.
  *
  * The request that drew the refusal goes with it. It was off topic anyway, and a
  * question left in the background with no answer under it is the one shape the
  * replay is written to avoid.
  */
-function withoutRefusedExchanges(history: ConversationMessage[]): ConversationMessage[] {
+function withoutRefusedExchanges(
+  history: ConversationMessage[],
+  refusals: readonly string[]
+): ConversationMessage[] {
   const kept: ConversationMessage[] = []
   for (const message of history) {
-    if (message.role === 'assistant' && isRefusal(message.content)) {
+    if (message.role === 'assistant' && isRefusal(message.content, refusals)) {
       if (kept[kept.length - 1]?.role === 'user') {
         kept.pop()
       }
@@ -205,9 +188,32 @@ export class OnDeviceBrain implements Brain {
   /** How many refusals have been said, so the next one is worded differently. */
   private refusalsSaid = 0
 
-  /** Clear the node's conversation and set the system prompt. */
-  reset(instructions: string = ON_DEVICE_SYSTEM_PROMPT): void {
-    voiceEngine.resetConversation(instructions)
+  private profile: AgentProfile
+
+  // Deliberately does not write the prompt to the engine. The router constructs
+  // this at module load, and `App.tsx` applies the profile in an effect, so the
+  // node is written once the tree is up rather than as an import side effect.
+  constructor(profile: AgentProfile) {
+    this.profile = profile
+  }
+
+  /**
+   * Wear a new profile: new prompt, and the node's context goes with it.
+   *
+   * Writing `instructions` is the node's only way to accept a prompt and it clears
+   * the history as it does, so there is nothing to preserve here even if there
+   * were a reason to.
+   */
+  applyProfile(profile: AgentProfile): void {
+    this.profile = profile
+    voiceEngine.resetConversation(profile.onDevicePrompt)
+    this.syncedMessages = 0
+    this.refusalsSaid = 0
+  }
+
+  /** Clear the node's conversation, keeping the current profile's prompt. */
+  reset(): void {
+    voiceEngine.resetConversation()
     this.syncedMessages = 0
   }
 
@@ -249,7 +255,8 @@ export class OnDeviceBrain implements Brain {
     // A refusal the model wrote as one bare sentence is reworded on the way out, so
     // the traveller never hears the same one twice; one that carried its own
     // redirect is better than anything canned and is spoken as written.
-    const text = answer === null || isBareRefusal(answer) ? this.nextRefusal() : answer
+    const text =
+      answer === null || isBareRefusal(answer, this.profile.refusals) ? this.nextRefusal() : answer
 
     // The node holds every message up to and including its reply — unless it dropped
     // the turn as too long, when it holds neither and the next turn rebuilds it.
@@ -257,7 +264,7 @@ export class OnDeviceBrain implements Brain {
     // it just wrote. That costs one re-prefill on the turn after a refusal and
     // nothing otherwise.
     const droppedTheTurn = reply.text.trim() === INPUT_TOO_LONG_REPLY
-    const refused = isRefusal(text)
+    const refused = isRefusal(text, this.profile.refusals)
     this.syncedMessages = droppedTheTurn || refused ? 0 : history.length + 2
 
     return { text, brain: this.id, processingTime }
@@ -265,7 +272,8 @@ export class OnDeviceBrain implements Brain {
 
   /** Say the refusal a different way each time it comes up. */
   private nextRefusal(): string {
-    const refusal = REFUSALS[this.refusalsSaid % REFUSALS.length]
+    const { refusals } = this.profile
+    const refusal = refusals[this.refusalsSaid % refusals.length]
     this.refusalsSaid += 1
     return refusal
   }
@@ -311,7 +319,7 @@ export class OnDeviceBrain implements Brain {
    * instruction rather than another transcript line for it to continue.
    */
   private renderReplay(history: ConversationMessage[], transcript: string): string {
-    const kept = withoutRefusedExchanges(history)
+    const kept = withoutRefusedExchanges(history, this.profile.refusals)
     if (kept.length === 0) {
       return transcript
     }

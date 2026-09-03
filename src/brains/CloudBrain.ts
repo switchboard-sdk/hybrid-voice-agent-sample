@@ -1,7 +1,7 @@
 import {
-  CLOUD_SYSTEM_PROMPT,
   brainError,
   cancelledError,
+  type AgentProfile,
   type Brain,
   type BrainId,
   type BrainReply,
@@ -85,6 +85,8 @@ const DEFAULT_TIMEOUT_MS = 15_000
 const RETRY_DELAY_MS = 500
 
 export interface CloudBrainConfig {
+  /** Which agent this brain speaks as. Its `cloudPrompt` is sent with every turn. */
+  profile: AgentProfile
   baseUrl?: string
   /**
    * Required, and the same pair that starts the SDK — the endpoint takes no
@@ -116,9 +118,10 @@ export class CloudBrain implements Brain {
   private readonly appSecret?: string
   private readonly timeoutMs: number
   private readonly fetchImpl: typeof fetch
-  private instructions = CLOUD_SYSTEM_PROMPT
+  private instructions: string
 
-  constructor(config: CloudBrainConfig = {}) {
+  constructor(config: CloudBrainConfig) {
+    this.instructions = config.profile.cloudPrompt
     this.baseUrl = config.baseUrl ?? DEFAULT_BASE_URL
     this.appId = config.appId
     this.appSecret = config.appSecret
@@ -129,12 +132,18 @@ export class CloudBrain implements Brain {
   }
 
   /**
-   * Nothing to clear — there is no cached conversation on this side. The system
-   * prompt is kept, and defaults to the cloud set rather than the on-device one.
+   * Wear a new profile. The prompt is sent with every request, so this costs
+   * nothing and takes effect on the next turn.
    */
-  reset(instructions: string = CLOUD_SYSTEM_PROMPT): void {
-    this.instructions = instructions
+  applyProfile(profile: AgentProfile): void {
+    this.instructions = profile.cloudPrompt
   }
+
+  /**
+   * Nothing to clear — there is no cached conversation on this side, and the
+   * profile's prompt is kept.
+   */
+  reset(): void {}
 
   async reply(
     transcript: string,
