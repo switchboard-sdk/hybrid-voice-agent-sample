@@ -13,12 +13,13 @@
  *   consulting the length of the conversation or a latency budget as well.
  */
 
+import { activeProfile } from '../profiles'
 import { CloudBrain } from './CloudBrain'
 import { OnDeviceBrain } from './OnDeviceBrain'
 import type { Brain, BrainId } from './types'
 
 /** The `LlamaCpp.LLM` node. One node, so one brain. */
-export const onDeviceBrain = new OnDeviceBrain()
+export const onDeviceBrain = new OnDeviceBrain(activeProfile())
 
 /**
  * The cloud LLM, reached through Switchboard's chat endpoint. It takes the same
@@ -27,6 +28,7 @@ export const onDeviceBrain = new OnDeviceBrain()
  * it elsewhere to run against a proxy of your own.
  */
 export const cloudBrain = new CloudBrain({
+  profile: activeProfile(),
   appId: process.env.EXPO_PUBLIC_SWITCHBOARD_APP_ID || undefined,
   appSecret: process.env.EXPO_PUBLIC_SWITCHBOARD_APP_SECRET || undefined,
   baseUrl: process.env.EXPO_PUBLIC_CLOUD_LLM_BASE_URL || undefined,

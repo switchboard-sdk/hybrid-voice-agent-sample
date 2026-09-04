@@ -1,5 +1,9 @@
 import { CloudBrain, type CloudBrainConfig } from './CloudBrain'
-import { CLOUD_SYSTEM_PROMPT, ON_DEVICE_SYSTEM_PROMPT, type ConversationMessage } from './types'
+import { TRAVEL_PROFILE } from '../profiles'
+import type { ConversationMessage } from './types'
+
+const CLOUD_SYSTEM_PROMPT = TRAVEL_PROFILE.cloudPrompt
+const ON_DEVICE_SYSTEM_PROMPT = TRAVEL_PROFILE.onDevicePrompt
 
 const user = (content: string): ConversationMessage => ({ role: 'user', content })
 const assistant = (content: string): ConversationMessage => ({ role: 'assistant', content })
@@ -32,8 +36,9 @@ const aborted = (): Error => {
   return error
 }
 
-const makeBrain = (fetchImpl: jest.Mock, config: CloudBrainConfig = {}) =>
+const makeBrain = (fetchImpl: jest.Mock, config: Partial<CloudBrainConfig> = {}) =>
   new CloudBrain({
+    profile: TRAVEL_PROFILE,
     baseUrl: 'https://example.test/chat',
     appId: 'app-test',
     appSecret: 'secret-test',
@@ -108,7 +113,7 @@ describe('reply', () => {
 
   it('says so plainly when there are no credentials, without calling out', async () => {
     const fetchImpl = jest.fn(() => Promise.resolve(ok('a')))
-    const brain = new CloudBrain({ fetchImpl })
+    const brain = new CloudBrain({ profile: TRAVEL_PROFILE, fetchImpl })
 
     await expect(brain.reply('hi', [])).rejects.toThrow(/EXPO_PUBLIC_SWITCHBOARD_APP_ID/)
     expect(fetchImpl).not.toHaveBeenCalled()

@@ -153,17 +153,30 @@ carries the extension.
 
 ## The persona
 
-Three prompts, all in [`src/brains/types.ts`](../src/brains/types.ts): the rules
-both brains are given, plus a set for each. What the two models can honestly say
-differs — the one on the phone cannot look anything up and has nothing worth
-trusting to say about a named place, while the cloud model is neither offline nor
-short of knowledge. Each is told only what is true of it.
+Two prompts per profile, in [`src/profiles.ts`](../src/profiles.ts) — one for each
+brain. What the two models can honestly say differs: the one on the phone cannot
+look anything up and has nothing worth trusting to say about a named place, while
+the cloud model is neither offline nor short of knowledge. Each is told only what is
+true of it. [Agent profiles](../README.md#agent-profiles) covers writing a new one.
 
-Shared are the rules about the shape of a spoken reply rather than what is behind
-it: one or two sentences, no lists or verse, nothing it can book or phone, answer
-the latest message. `systemPrompt()` numbers each set from 1, so a shared rule sits
-wherever it reads best in `ON_DEVICE_SYSTEM_PROMPT` and `CLOUD_SYSTEM_PROMPT`
-without either having to count.
+Only `SPOKEN_BREVITY` is shared across profiles, because it is the one rule that
+names no domain: one or two sentences, no lists or verse. Everything else names the
+user or the subject, so it belongs to a profile. `systemPrompt()` numbers each set
+from 1, so a rule sits wherever it reads best in either prompt without either
+having to count.
+
+**A brief the user types gets a third, generic set.** `customProfile()` builds both
+prompts from the typed text plus `genericOnDeviceRules()` and
+`genericCloudRules()` — the same shape as the written sets, generalised from them.
+They are necessarily blunter: a general rule cannot name the things this particular
+agent must not invent, which is most of what makes the written sets work. That is
+the cost of typing a prompt rather than writing a profile, and `PromptScreen` says
+so on the screen rather than leaving it to be discovered on a phone.
+
+The typed text is never sent verbatim to both brains. It cannot be: the on-device
+set has to say it is offline, and a cloud model told that announces it every turn.
+So the brief is the persona line and each brain's rules are composed around it,
+with both assembled prompts shown in the editor so the composition is visible.
 
 The two sets pull in opposite directions, and that is the point of having two. The
 on-device rules exist to stop a model inventing what it cannot know; the cloud rules
@@ -172,6 +185,10 @@ cloud is told to name a range and flag it as approximate, and to send the travel
 away to check only when the answer is genuinely live — today's price, whether
 somewhere is open right now. Caution written for the smaller model is not caution on
 the larger one, it is just an unhelpful answer.
+
+Every profile inherits that split, which is why `src/profiles.test.ts` asserts it:
+no profile's cloud prompt may mention being offline, and no two prompts in a profile
+may be the same string.
 
 The on-device set is written for the smaller model: numbered one-line rules rather
 than a paragraph, and **every rule phrased as something to do**.
@@ -216,6 +233,13 @@ two in a row make it the answer to everything. So a refusal is **said a differen
 each time, and is **kept out of the replay**, so the node never reads it back. See
 [Conversation history](#conversation-history) for what the second costs.
 
+The wordings come from the active profile rather than from this file. The code says
+one instead of asking the prompt for it, so a sentence written for another domain
+would contradict the prompt it shipped with — a telco agent refusing with "I can
+only help with travel" is the same class of bug as a cloud model announcing it is
+offline. The first entry is canonical: it is the wording a reply is matched against,
+so it has to be the plainest statement of the boundary.
+
 Neither habit shows up on the cloud path.
 
 ## The two brains
@@ -229,6 +253,14 @@ Neither owns the conversation — the transcript is handed in on every turn — 
 swapping brains mid-conversation carries the context across rather than starting
 over. A reply comes back saying which brain produced it and how long it took, so
 a turn can be labelled with both.
+
+`reset()` takes no argument, and that is the point of its shape. It is what the
+Clear button calls, and a parameter defaulting to a built-in prompt would quietly
+undo whichever profile the app is wearing. Changing the prompt is `applyProfile`
+instead, which is allowed to throw everything away: on the cloud side it costs
+nothing, since the prompt travels with every request, and on the device it costs the
+node's context, because writing `instructions` is the node's only way to accept a
+prompt and it clears the history as it does.
 
 `OnDeviceBrain` wraps the `LlamaCpp.LLM` node. Because that node takes a single
 string rather than a list of turns, a replayed conversation has its roles spelled

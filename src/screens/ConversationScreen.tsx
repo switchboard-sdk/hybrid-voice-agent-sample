@@ -14,12 +14,21 @@ import {
   brains,
   canAnswer,
   route,
+  type AgentProfile,
   type Brain,
   type BrainId,
   type ConversationMessage,
 } from '../brains'
 import { OFFLINE_NOTICE, useOnline } from '../connectivity'
 import { describeError, isCancelled, type ErrorDescription } from '../errors'
+import {
+  availableProfiles,
+  nextProfileId,
+  setProfile,
+  setTypedBrief,
+  typedBrief,
+} from '../profiles'
+import { PromptScreen } from './PromptScreen'
 import { useEdgeSpeech, type VoiceState } from '../voice'
 
 /** What the transcript itself does not carry: who answered, and how long it took. */
@@ -89,25 +98,24 @@ function pickerHint(online: boolean, modelReady: boolean): string {
   return 'Switch any time — both brains read the same conversation.'
 }
 
-const EXAMPLE_PROMPTS = [
-  'How do I get from the airport to the harbour?',
-  'My flight was cancelled — what are my options?',
-  'What is worth seeing here in two days?',
-]
-
 export interface ConversationScreenProps {
   /** Whether the model's weights are on the phone — see `src/model`. */
   modelReady: boolean
+  /** Which agent this is. `App.tsx` keys the screen on it, so it never changes here. */
+  profile: AgentProfile
 }
 
 /**
- * The demo screen: a travel agent you talk to.
+ * The demo screen: an agent you talk to, wearing whichever profile is active.
  *
  * The transcript holds only what was said. Badges, timings and interrupt markers
  * are annotations kept alongside it by index, since both brains read the transcript
  * and neither produced a message about itself.
  */
-export function ConversationScreen({ modelReady }: ConversationScreenProps): React.JSX.Element {
+export function ConversationScreen({
+  modelReady,
+  profile,
+}: ConversationScreenProps): React.JSX.Element {
   const {
     transcript,
     onTranscriptComplete,
@@ -140,6 +148,7 @@ export function ConversationScreen({ modelReady }: ConversationScreenProps): Rea
   // Seconds the current turn has been thinking. The cloud path can spend two
   // timeouts and a retry on one turn, which needs to be legible while it happens.
   const [thinkingSeconds, setThinkingSeconds] = useState(0)
+  const [editingPrompt, setEditingPrompt] = useState(false)
 
   const online = useOnline()
   // The brain the user picked, and the one that will answer. They differ only when
@@ -276,8 +285,24 @@ export function ConversationScreen({ modelReady }: ConversationScreenProps): Rea
     return () => clearInterval(tick)
   }, [thinking])
 
-  // Abandon whatever is in flight when the screen goes away.
-  useEffect(() => () => turnRef.current?.controller.abort(), [])
+  // Read only by the unmount cleanup below. The provider builds these fresh on
+  // every render, so depending on them directly would tear the session down on
+  // each one.
+  const teardownRef = useRef({ stopSpeaking, stopListening })
+  teardownRef.current = { stopSpeaking, stopListening }
+
+  // Abandon whatever is in flight when the screen goes away. Stopping the voice
+  // and the mic matters as much as the turn: a profile change remounts this
+  // screen, and the previous agent's reply would otherwise carry on being read out
+  // over the new one, with the mic still open.
+  useEffect(
+    () => () => {
+      turnRef.current?.controller.abort()
+      teardownRef.current.stopSpeaking().catch(() => {})
+      teardownRef.current.stopListening().catch(() => {})
+    },
+    []
+  )
 
   // Losing the connection mid-conversation. `route` has already withdrawn the cloud
   // brain by the time this runs, so the notice is spoken and the question the cloud
@@ -353,6 +378,24 @@ export function ConversationScreen({ modelReady }: ConversationScreenProps): Rea
     await stopListening()
   }
 
+  // A new agent resets everything, so it is refused mid-turn rather than pulling
+  // the screen down under a reply that is still arriving. Stop, then switch.
+  const switchingBlocked = sessionActive || thinking
+
+  const switchProfile = () => {
+    if (switchingBlocked) {
+      return
+    }
+    setProfile(nextProfileId())
+  }
+
+  const editPrompt = () => {
+    if (switchingBlocked) {
+      return
+    }
+    setEditingPrompt(true)
+  }
+
   const switchBrain = () => {
     if (!otherBrain) {
       return
@@ -375,13 +418,26 @@ export function ConversationScreen({ modelReady }: ConversationScreenProps): Rea
     brains.forEach((candidate) => candidate.reset())
   }
 
+  // Every hook above has run, so this is a safe place to swap the whole screen.
+  // Saving changes the profile, which remounts this component and takes the
+  // editor's own state with it — there is nothing to close.
+  if (editingPrompt) {
+    return (
+      <PromptScreen
+        initialBrief={typedBrief() ?? profile.brief}
+        onSave={setTypedBrief}
+        onCancel={() => setEditingPrompt(false)}
+      />
+    )
+  }
+
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" />
 
       <View style={styles.header}>
         <View style={styles.headerRow}>
-          <Text style={styles.title}>Travel Assistant</Text>
+          <Text style={styles.title}>{profile.title}</Text>
           <View style={styles.aiChip}>
             <Text style={styles.aiChipText}>◆ AI VOICE</Text>
           </View>
@@ -391,6 +447,21 @@ export function ConversationScreen({ modelReady }: ConversationScreenProps): Rea
           {conversationHistory.length > 0 && (
             <TouchableOpacity onPress={clearConversation}>
               <Text style={styles.clearButton}>Clear</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+        <View style={[styles.headerRow, styles.profileRow]}>
+          <TouchableOpacity onPress={editPrompt} disabled={switchingBlocked}>
+            <Text style={[styles.profileButton, switchingBlocked && styles.profileButtonDisabled]}>
+              Edit prompt
+            </Text>
+          </TouchableOpacity>
+          {availableProfiles().length > 1 && (
+            <TouchableOpacity onPress={switchProfile} disabled={switchingBlocked}>
+              <Text
+                style={[styles.profileButton, switchingBlocked && styles.profileButtonDisabled]}>
+                {profile.title} ›
+              </Text>
             </TouchableOpacity>
           )}
         </View>
@@ -428,13 +499,14 @@ export function ConversationScreen({ modelReady }: ConversationScreenProps): Rea
         contentContainerStyle={styles.chatContent}>
         {conversationHistory.length === 0 && (
           <View style={styles.empty}>
-            <Text style={styles.emptyTitle}>Ask about your trip</Text>
+            <Text style={styles.emptyTitle}>Ask a question</Text>
             <Text style={styles.emptyBody}>
               {modelReady
-                ? 'The agent can answer on the phone itself, so it keeps working where there is no signal. Ask it something like:'
-                : 'The model is not on this phone, so replies come from the cloud for now. Ask it something like:'}
+                ? 'The agent can answer on the phone itself, so it keeps working where there is no signal.'
+                : 'The model is not on this phone, so replies come from the cloud for now.'}
+              {profile.examplePrompts.length > 0 && ' Ask it something like:'}
             </Text>
-            {EXAMPLE_PROMPTS.map((prompt) => (
+            {profile.examplePrompts.map((prompt) => (
               <Text key={prompt} style={styles.emptyPrompt}>
                 “{prompt}”
               </Text>
@@ -594,6 +666,20 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '600',
     color: '#2196F3',
+  },
+  profileRow: {
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: '#f0f0f0',
+    paddingTop: 8,
+  },
+  profileButton: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#2196F3',
+  },
+  profileButtonDisabled: {
+    color: '#bbb',
   },
   banner: {
     flexDirection: 'row',

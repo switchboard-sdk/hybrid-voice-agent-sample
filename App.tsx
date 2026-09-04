@@ -1,12 +1,13 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import { EdgeSpeechProvider } from './src/voice'
 import { ConversationScreen } from './src/screens/ConversationScreen'
 import { ModelDownloadScreen } from './src/screens/ModelDownloadScreen'
 import { SetupScreen } from './src/screens/SetupScreen'
-import { ON_DEVICE_SYSTEM_PROMPT } from './src/brains'
+import { brains } from './src/brains'
 import { useModel } from './src/model'
+import { restoreTypedBrief, useProfile } from './src/profiles'
 
 // Credentials from environment variables (see .env.example)
 const SWITCHBOARD_APP_ID = process.env.EXPO_PUBLIC_SWITCHBOARD_APP_ID ?? ''
@@ -41,7 +42,21 @@ export default function App(): React.JSX.Element {
  */
 function VoiceAgent(): React.JSX.Element {
   const model = useModel()
+  const profile = useProfile()
   const [cloudOnly, setCloudOnly] = useState(false)
+
+  // A brief typed in an earlier session, read back once. Reading a file is not
+  // something an import should do, so it happens here rather than at module load.
+  useEffect(() => {
+    restoreTypedBrief()
+  }, [])
+
+  // Both brains wear the profile before anything can ask them for a turn. The
+  // router constructs them on the profile a build starts on, so this is only for
+  // a change made while the app is running.
+  useEffect(() => {
+    brains.forEach((brain) => brain.applyProfile(profile))
+  }, [profile])
 
   if (model.status !== 'ready' && !cloudOnly) {
     return <ModelDownloadScreen download={model} onSkip={() => setCloudOnly(true)} />
@@ -71,8 +86,15 @@ function VoiceAgent(): React.JSX.Element {
       llmMaxTokens={80}
       // Undefined leaves the language-model node out of the graph entirely.
       llmModelPath={model.path ?? undefined}
-      llmInstructions={ON_DEVICE_SYSTEM_PROMPT}>
-      <ConversationScreen modelReady={model.status === 'ready'} />
+      llmInstructions={profile.onDevicePrompt}>
+      {/* Keyed on the profile: a new agent is a new product, not a new topic, so
+          the remount is what drops the transcript, the badges and the picked
+          brain rather than any teardown code here. */}
+      <ConversationScreen
+        key={profile.id}
+        profile={profile}
+        modelReady={model.status === 'ready'}
+      />
     </EdgeSpeechProvider>
   )
 }

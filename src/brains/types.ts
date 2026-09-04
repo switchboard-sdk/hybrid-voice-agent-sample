@@ -59,78 +59,79 @@ export interface Brain {
     signal?: AbortSignal
   ): Promise<BrainReply>
 
-  /** Drop any cached conversation state and set the system prompt. */
-  reset(instructions?: string): void
+  /**
+   * Adopt a new agent profile.
+   *
+   * Nothing is carried over. A profile is a different product rather than a new
+   * topic, so the prompt changes and whatever conversation state the
+   * implementation held goes with it.
+   */
+  applyProfile(profile: AgentProfile): void
+
+  /**
+   * Drop any cached conversation state, keeping the current profile.
+   *
+   * Takes no prompt on purpose: the Clear button calls this, and a parameter
+   * defaulting to a built-in prompt would quietly undo whatever profile is
+   * running.
+   */
+  reset(): void
 }
 
 /**
- * The persona, in three parts: rules both brains get, and a set for each.
+ * Everything about this app that belongs to one business rather than to the code.
  *
- * What the two models can honestly say differs. The on-device one cannot look
- * anything up and has nothing worth trusting to say about a named place; the cloud
- * one is neither offline nor short of knowledge, and is told to answer with a figure
- * rather than hedge over one it knows. Each set holds only what is true of its own
- * model.
+ * White-labelling means writing one of these and nothing else. `src/profiles.ts`
+ * holds them, and `EXPO_PUBLIC_AGENT_PROFILE` picks which one a build wears.
  *
- * The on-device set is written for a 1B model, where every line has to be an
- * instruction: a rule that only describes a situation buys nothing, refusal and
- * redirect have to land in one sentence, and the no-figures rule has to name the
- * hedge words. Each do-not-invent rule carries a worked example, since a bare
- * prohibition does not hold at that size. What the set does not carry is a rule about
- * what to turn down: a rule cannot see what the model is about to write, so
- * `OnDeviceBrain` decides that from the reply itself.
+ * The refusal wordings travel with the prompts because `OnDeviceBrain` says one
+ * in code rather than asking the prompt for it — a sentence written for another
+ * domain would contradict the prompt it shipped with.
  */
-const PERSONA =
-  'You are the voice of a travel assistant app. The traveller speaks to you and hears your reply read aloud.'
+export interface AgentProfile {
+  /** Also the React key that discards the screen's state when the profile changes. */
+  readonly id: string
+  /** The conversation screen's heading. */
+  readonly title: string
+  /**
+   * What the agent is, in a sentence or two — the line both prompts open with.
+   *
+   * This is the part a user types. Both prompts below are built from it, so it is
+   * kept as its own field rather than only in the assembled text: the editor
+   * pre-fills from here, and re-parsing a finished prompt to find it would be
+   * guesswork.
+   */
+  readonly brief: string
+  readonly onDevicePrompt: string
+  readonly cloudPrompt: string
+  /**
+   * What a refusal may sound like, said in order so the same one is never heard
+   * twice. The first is canonical: it is the wording a reply is matched against,
+   * so it has to be the plainest statement of the boundary.
+   */
+  readonly refusals: readonly string[]
+  /** Offered before the first turn, as examples of what to ask. */
+  readonly examplePrompts: readonly string[]
+}
 
-// Named rather than gathered into a list, so each prompt below reads in its own
-// order.
-const BREVITY =
+/**
+ * The one rule no profile needs to reword: what a spoken reply looks like. Every
+ * other rule names the domain, so it belongs to a profile rather than here.
+ */
+export const SPOKEN_BREVITY =
   'Reply in one or two short sentences, always. No lists, no verse, no headings, no emoji.'
-const NO_ACTIONS =
-  'You cannot book, buy, reserve, cancel or phone anything, and nobody can call you. Asked to, say the traveller has to do it themselves and say where.'
-const NO_ASSUMED_LOCATION =
-  'Never assume which town or country the traveller is in, or what they are doing, unless they told you.'
-const LATEST_MESSAGE =
-  'Answer the traveller\'s latest message. Never write "Me:", "You:" or "Assistant:".'
 
 /**
- * How the on-device brain turns down a request that is not travel help. It is said
- * in code rather than asked for in the prompt: a rule cannot see what the model is
- * about to write, so it refuses questions it should answer while missing the ones it
- * should not. `OnDeviceBrain` decides, and `REFUSALS` there is what it says.
+ * A persona line, then the rules numbered from 1.
+ *
+ * A worked example belongs to the rule above it, so it travels in the same entry
+ * and keeps its indent rather than taking a number of its own. Numbering from 1
+ * per set is what lets a rule sit wherever it reads best in either prompt without
+ * either having to count.
  */
-export const ON_DEVICE_REFUSAL = 'I can only help with travel.'
-
-/**
- * The persona, then the rules numbered from 1. A worked example belongs to the rule
- * above it, so it travels in the same entry and keeps its indent rather than a
- * number of its own.
- */
-function systemPrompt(rules: readonly string[]): string {
-  return [PERSONA, '', ...rules.map((rule, index) => `${index + 1}. ${rule}`)].join('\n')
+export function systemPrompt(persona: string, rules: readonly string[]): string {
+  return [persona, '', ...rules.map((rule, index) => `${index + 1}. ${rule}`)].join('\n')
 }
-
-export const ON_DEVICE_SYSTEM_PROMPT = systemPrompt([
-  BREVITY,
-  'You are offline and cannot look anything up. When an answer needs a fact you cannot check — a time, a price, the weather, an address, or what some particular place has — say you cannot check it offline and suggest who can, in the same sentence.',
-  'Never give a figure you cannot check. Not as an estimate, not as a range, not as "around" or "about" or "a few". Saying you cannot check it is always better than a number that sounds right.\n   Asked "How much is a taxi to the harbour?", a good reply is: "I can\'t check fares while offline, but the taxi rank at the terminal will quote you before you set off."',
-  NO_ACTIONS,
-  `Asked what a named place or business is like or what it has, say you have not been there and cannot check while offline, then say who can, in the same sentence. ${NO_ASSUMED_LOCATION}\n   Asked "What is the harbour like?", a good reply is: "I haven't been there and can't check while offline, but a local tourist office will tell you what to expect."`,
-  'Give general guidance freely — how people usually get around, what to do when a plan falls through, what to ask for.',
-  LATEST_MESSAGE,
-])
-
-export const CLOUD_SYSTEM_PROMPT = systemPrompt([
-  BREVITY,
-  'Answer from what you know, and answer properly. Asked what something costs or how long it takes, give the usual figure or range and say it is approximate — a traveller who wanted "it depends" would not have asked.',
-  'Only send someone away to check when the answer is genuinely live: today\'s price, this week\'s timetable, whether somewhere is open right now. Say what is typical first, then where to confirm it.\n   Asked "How much should I budget per day in Iceland?", a good reply is: "Reckon on around 150 to 250 euros a day for food, fuel and a room, more if you are hiring a car — worth checking current rates before you commit."',
-  'Never state a current specific as fact — a fare, an opening time, an address — unless you are sure of it. A range you flag as approximate is fine; a precise number you invented is not.',
-  NO_ACTIONS,
-  NO_ASSUMED_LOCATION,
-  'If asked for something that is not travel help, say in your own words that travel is what you are here for and offer the nearest travel question you can answer. Never turn two requests down with the same sentence.',
-  LATEST_MESSAGE,
-])
 
 /** Build an Error carrying a machine `code`, matching VoiceEngine's convention. */
 export function brainError(code: string, message: string): Error {

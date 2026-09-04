@@ -6,6 +6,7 @@ import { EdgeSpeechProvider } from '../voice'
 import { voiceEngine } from '../voice/VoiceEngine'
 import { cloudBrain, onDeviceBrain, type BrainReply } from '../brains'
 import { OFFLINE_NOTICE, _resetConnectivity } from '../connectivity'
+import { TELCO_PROFILE, TRAVEL_PROFILE, _resetProfiles, activeProfile } from '../profiles'
 
 // Capture addListener callbacks by event name so tests can simulate the pipeline.
 const eventListeners: Record<string, Array<(data?: unknown) => void>> = {}
@@ -37,7 +38,7 @@ function fireNativeEvent(eventName: string, data?: unknown): void {
 const renderScreen = (modelReady = true) =>
   render(
     <EdgeSpeechProvider appId="test-id" appSecret="test-secret">
-      <ConversationScreen modelReady={modelReady} />
+      <ConversationScreen modelReady={modelReady} profile={TRAVEL_PROFILE} />
     </EdgeSpeechProvider>
   )
 
@@ -73,6 +74,7 @@ describe('ConversationScreen', () => {
     jest.clearAllMocks()
     network.resetNetworkMock()
     _resetConnectivity()
+    _resetProfiles()
     Object.keys(eventListeners).forEach((key) => {
       eventListeners[key] = []
     })
@@ -105,6 +107,78 @@ describe('ConversationScreen', () => {
     jest.restoreAllMocks()
   })
 
+  describe('the profile', () => {
+    it('takes its heading and its examples from the profile it was given', () => {
+      renderScreen()
+
+      expect(screen.getByText(TRAVEL_PROFILE.title)).toBeTruthy()
+      TRAVEL_PROFILE.examplePrompts.forEach((prompt) => {
+        expect(screen.getByText(`“${prompt}”`)).toBeTruthy()
+      })
+    })
+
+    it('offers the next profile, and asks for it when tapped', () => {
+      renderScreen()
+
+      // The picker names where it goes, not where it is, so the label is the
+      // profile after the active one.
+      const picker = screen.getByText(`${TRAVEL_PROFILE.title} ›`)
+      fireEvent.press(picker)
+
+      // `App.tsx` owns the remount, so all this screen does is ask.
+      expect(activeProfile()).toBe(TELCO_PROFILE)
+    })
+
+    it('opens the prompt editor on the active brief, and wears what is saved', () => {
+      renderScreen()
+
+      fireEvent.press(screen.getByText('Edit prompt'))
+      const field = screen.getByLabelText('Agent brief')
+      expect(field.props.value).toBe(TRAVEL_PROFILE.brief)
+
+      fireEvent.changeText(field, 'You are the voice of a bicycle repair shop.')
+      fireEvent.press(screen.getByText('Save'))
+
+      expect(activeProfile().id).toBe('custom')
+      expect(activeProfile().brief).toBe('You are the voice of a bicycle repair shop.')
+    })
+
+    it('leaves the profile alone when the editor is cancelled', () => {
+      renderScreen()
+
+      fireEvent.press(screen.getByText('Edit prompt'))
+      fireEvent.changeText(screen.getByLabelText('Agent brief'), 'something else')
+      fireEvent.press(screen.getByText('Cancel'))
+
+      expect(activeProfile()).toBe(TRAVEL_PROFILE)
+      expect(screen.getByText(TRAVEL_PROFILE.title)).toBeTruthy()
+    })
+
+    // A profile change tears the screen down; doing that under a reply still
+    // arriving would leave the mic open and the old agent talking over the new one.
+    it('refuses to open the editor while a turn is in flight', async () => {
+      jest.mocked(onDeviceBrain.reply).mockReturnValue(new Promise(() => {}))
+      renderScreen()
+      await startTalking()
+      await say('hello')
+
+      fireEvent.press(screen.getByText('Edit prompt'))
+
+      expect(screen.queryByLabelText('Agent brief')).toBeNull()
+    })
+
+    it('refuses to switch while a turn is in flight', async () => {
+      jest.mocked(onDeviceBrain.reply).mockReturnValue(new Promise(() => {}))
+      renderScreen()
+      await startTalking()
+      await say('hello')
+
+      fireEvent.press(screen.getByText(`${TRAVEL_PROFILE.title} ›`))
+
+      expect(activeProfile()).toBe(TRAVEL_PROFILE)
+    })
+  })
+
   describe('framing', () => {
     it('presents itself as a travel agent with a voice that is not human', () => {
       renderScreen()
@@ -117,7 +191,7 @@ describe('ConversationScreen', () => {
     it('suggests what to ask before the first turn', () => {
       renderScreen()
 
-      expect(screen.getByText('Ask about your trip')).toBeTruthy()
+      expect(screen.getByText('Ask a question')).toBeTruthy()
       expect(screen.getByText('“How do I get from the airport to the harbour?”')).toBeTruthy()
     })
   })
@@ -571,7 +645,7 @@ describe('ConversationScreen', () => {
       })
 
       expect(screen.queryByText('How do I get to the harbour?')).toBeNull()
-      expect(screen.getByText('Ask about your trip')).toBeTruthy()
+      expect(screen.getByText('Ask a question')).toBeTruthy()
       expect(onDeviceBrain.reset).toHaveBeenCalled()
       expect(cloudBrain.reset).toHaveBeenCalled()
     })
