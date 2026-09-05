@@ -16,6 +16,8 @@ pipeline comes from [EdgeSpeech](https://github.com/switchboard-sdk/EdgeSpeech).
 
 [![Watch the demo](https://img.youtube.com/vi/TjzA2wWlgRo/maxresdefault.jpg)](https://www.youtube.com/watch?v=TjzA2wWlgRo)
 
+**▶ [Watch the demo on YouTube](https://www.youtube.com/watch?v=TjzA2wWlgRo)**
+
 Running on an iPhone 13. It opens on a turn answered entirely on the phone,
 then airplane mode goes on: with no network at all, recognition, the language model
 and the voice keep working, and the agent declines to invent a taxi fare it cannot
