@@ -12,6 +12,19 @@ pipeline comes from [EdgeSpeech](https://github.com/switchboard-sdk/EdgeSpeech).
 > **Status: early.** The on-device speech pipeline runs, both brains sit behind one
 > interface, and you can switch between them mid-conversation.
 
+## Demo
+
+[![Watch the demo](https://img.youtube.com/vi/TjzA2wWlgRo/maxresdefault.jpg)](https://www.youtube.com/watch?v=TjzA2wWlgRo)
+
+Three minutes, on an iPhone 13. It opens on a turn answered entirely on the phone,
+then airplane mode goes on: with no network at all, recognition, the language model
+and the voice keep working, and the agent declines to invent a taxi fare it cannot
+check. The connection comes back and one tap moves the thinking to the cloud — and
+because both brains read the same transcript, the cloud answers a follow-up about
+what the on-device model said while offline. It closes on barge-in: talking over a
+reply stops it mid-sentence and marks that turn interrupted. Every answer carries
+the brain that produced it and the time that brain took.
+
 ## Architecture
 
 Everything but the cloud brain runs on the phone. Speech recognition and synthesis
