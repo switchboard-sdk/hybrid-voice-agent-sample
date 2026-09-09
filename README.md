@@ -14,6 +14,11 @@ pipeline comes from [EdgeSpeech](https://github.com/switchboard-sdk/EdgeSpeech).
 
 ## Demo
 
+We originally built this example as part of a buildathon. This Loom video provides a brief intro: 
+https://www.loom.com/share/a6af3e55e93246b79cf71a28d54e96cd
+
+And the video below provides a more thorough overview of the functionality. 
+
 [![Watch the demo](https://img.youtube.com/vi/TjzA2wWlgRo/maxresdefault.jpg)](https://www.youtube.com/watch?v=TjzA2wWlgRo)
 
 **▶ [Watch the demo on YouTube](https://www.youtube.com/watch?v=TjzA2wWlgRo)**
